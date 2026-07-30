@@ -1,0 +1,14 @@
+[profile.default]
+src = "src"
+out = "out"
+libs = ["lib"]
+cache = true
+cache_path = "cache"
+solc_version = "0.8.24"
+
+[rpc_endpoints]
+monad_testnet = "${MONAD_TESTNET_RPC_URL}"
+
+[fmt]
+line_length = 120
+tab_width = 4
