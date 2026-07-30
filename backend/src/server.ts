@@ -14,17 +14,8 @@ app.get("/health", (_req, res) => {
   res.json({ status: "ok", service: "vantage-backend" });
 });
 
-// import simulateRouter from "./routes/simulate";
-// import evaluateRouter from "./routes/evaluate";
-// import statsRouter from "./routes/stats";
-// import outcomeRouter from "./routes/outcome";
-// import contentionRouter from "./routes/contention";
-//
-// app.use("/api/simulate", simulateRouter);
-// app.use("/api/evaluate", evaluateRouter);
-// app.use("/api/stats", statsRouter);
-// app.use("/api/outcome", outcomeRouter);
-// app.use("/api/contention", contentionRouter);
+import evaluateRouter from "./routes/evaluate.js";
+app.use("/api", evaluateRouter);
 
 app.listen(PORT, () => {
   console.log(`Vantage backend listening on port ${PORT}`);

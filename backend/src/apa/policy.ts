@@ -5,6 +5,7 @@ import {
   type TransactionReceipt,
 } from "viem";
 import { monadTestnet } from "viem/chains";
+import { GoogleGenAI, Type } from "@google/genai";
 import { config } from "../config.js";
 import {
   type PSGForecast,
@@ -12,6 +13,8 @@ import {
   getPSGForecast,
   decodeRevertReason,
 } from "../psg/forecast.js";
+
+const genAI = new GoogleGenAI({});
 
 // ── Initialization ────────────────────────────────────────────────────
 
@@ -297,7 +300,7 @@ function templateExplain(forecast: PSGForecast, policy: PolicyResult): string {
 }
 
 /**
- * Call OpenAI's chat API to produce a single plain-English explanation
+ * Call Google's Gemini API to produce a single plain-English explanation
  * sentence.  Falls back to the deterministic template if no API key is
  * configured or the request fails.
  *
@@ -307,8 +310,8 @@ export async function explainPolicy(
   forecast: PSGForecast,
   policy: PolicyResult,
 ): Promise<string> {
-  const apiKey = config.openaiApiKey;
-
+  // SDK auto-picks up process.env.GEMINI_API_KEY
+  const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
     return templateExplain(forecast, policy);
   }
@@ -332,43 +335,36 @@ export async function explainPolicy(
     if (val !== null && val !== undefined) payload[key] = val;
   }
 
-  const systemPrompt =
-    "Given this transaction risk data, write exactly one plain-English sentence explaining what is happening and why, using only the numbers provided. Do not invent numbers or claims not present in the input.";
-
   try {
-    const response = await fetch(
-      "https://api.openai.com/v1/chat/completions",
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify({
-          model: "gpt-4o-mini",
-          messages: [
-            { role: "system", content: systemPrompt },
-            {
-              role: "user",
-              content: `Transaction risk data: ${JSON.stringify(payload)}`,
+    const response = await genAI.models.generateContent({
+      model: "gemini-2.5-flash",
+      contents: `Transaction risk data: ${JSON.stringify(payload)}`,
+      config: {
+        systemInstruction:
+          "Given this transaction risk data, write exactly one plain-English sentence explaining what is happening and why, using only the metrics provided. Do not invent numbers or claims.",
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            explanation: { type: Type.STRING },
+            riskLevel: {
+              type: Type.STRING,
+              enum: ["LOW", "MEDIUM", "HIGH", "CRITICAL"],
             },
-          ],
-          max_tokens: 120,
-          temperature: 0,
-        }),
+          },
+          required: ["explanation", "riskLevel"],
+        },
       },
-    );
+    });
 
-    if (!response.ok) {
-      return templateExplain(forecast, policy);
-    }
+    const text = response.text;
+    if (!text) return templateExplain(forecast, policy);
 
-    const body = await response.json() as {
-      choices?: Array<{ message?: { content?: string } }>;
+    const result = JSON.parse(text) as {
+      explanation?: string;
+      riskLevel?: string;
     };
-    const text = body?.choices?.[0]?.message?.content?.trim();
-
-    return text ?? templateExplain(forecast, policy);
+    return result.explanation?.trim() ?? templateExplain(forecast, policy);
   } catch {
     return templateExplain(forecast, policy);
   }
