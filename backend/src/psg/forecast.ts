@@ -194,11 +194,20 @@ export function decodeRevertReason(error: unknown): string {
       case "0x08c379a0": {
         try {
           if (argsHex.length < 64) return "Error(string) — malformed";
-          const stringLength = Number(BigInt("0x" + argsHex.slice(0, 64)));
+          // ABI-encoded Error(string): selector + offset(0x20) + length + data.
+          // Some providers emit a legacy layout with the length directly in the
+          // first word — detect the standard offset form and fall back otherwise.
+          const firstWord = argsHex.slice(0, 64);
+          const standard = BigInt("0x" + firstWord) === 0x20n; // offset 0x20
+          const lengthHex = standard ? argsHex.slice(64, 128) : firstWord;
+          const rawLength = BigInt("0x" + lengthHex);
+          if (rawLength > 10_000n) return "Error(string) — data truncated";
+          const stringLength = Number(rawLength);
+          const dataStart = standard ? 128 : 64;
           const neededHex = stringLength * 2;
-          if (argsHex.length < 64 + neededHex) return "Error(string) — data truncated";
+          if (argsHex.length < dataStart + neededHex) return "Error(string) — data truncated";
           const stringBytes = new Uint8Array(
-            argsHex.slice(64, 64 + neededHex).match(/.{1,2}/g)?.map((b) => parseInt(b, 16)) ?? []
+            argsHex.slice(dataStart, dataStart + neededHex).match(/.{1,2}/g)?.map((b) => parseInt(b, 16)) ?? []
           );
           let end = stringBytes.length;
           while (end > 0 && stringBytes[end - 1] === 0) end--;

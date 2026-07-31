@@ -163,6 +163,35 @@ export async function holdAndRecheck(
 
 // ── 3. Post-Submission Vanishing-Tx Watcher ────────────────────────────
 
+export type WatchPoll = {
+  /** 1-based poll number within this watch. */
+  iteration: number;
+  /** Milliseconds since watchTransaction started. */
+  elapsedMs: number;
+  /** Whether this iteration already found a mined receipt. */
+  hasReceipt: boolean;
+  /** Mempool visibility when no receipt yet — null when a receipt was found or on an RPC error. */
+  txKnown: boolean | null;
+  /** Set when this iteration hit a transient RPC error and kept polling. */
+  error?: string;
+};
+
+export type WatchTransactionOptions = {
+  pollIntervalMs?: number;
+  timeoutMs?: number;
+  /** Invoked on every poll iteration — lets callers observe real polling (timestamps, mempool state). */
+  onIteration?: (poll: WatchPoll) => void;
+};
+
+/**
+ * A submitted tx that the RPC never surfaces as pending (and that never
+ * mines) is treated as dropped after this long. Before this window, "not
+ * visible" is assumed to be node visibility lag, not an eviction — some
+ * RPCs (e.g. Monad testnet) don't return freshly-submitted pending txs from
+ * eth_getTransactionByHash.
+ */
+const NEVER_SEEN_GRACE_MS = 10_000;
+
 /**
  * Watch a submitted transaction until it confirms, fails, disappears, or
  * times out.  Polls every 2 seconds up to 60 seconds total.
@@ -170,11 +199,14 @@ export async function holdAndRecheck(
  * Never throws — all RPC errors are caught mid-poll and only surfaced as a
  * STUCK status if the deadline expires.
  */
-export async function watchTransaction(txHash: Hex): Promise<WatchResult> {
+export async function watchTransaction(
+  txHash: Hex,
+  options?: WatchTransactionOptions
+): Promise<WatchResult> {
   const client = getPublicClient();
   const startedAt = Date.now();
-  const deadline = startedAt + 60_000;
-  const pollIntervalMs = 2_000;
+  const deadline = startedAt + (options?.timeoutMs ?? 60_000);
+  const pollIntervalMs = options?.pollIntervalMs ?? 2_000;
 
   if (!client) {
     return {
@@ -184,8 +216,12 @@ export async function watchTransaction(txHash: Hex): Promise<WatchResult> {
     };
   }
 
+  let iteration = 0;
+  let everKnown = false; // has the tx ever been observed as pending in the mempool?
   while (Date.now() < deadline) {
-    const elapsed = Math.floor((Date.now() - startedAt) / 1000);
+    iteration++;
+    const elapsedMs = Date.now() - startedAt;
+    const elapsed = Math.floor(elapsedMs / 1000);
 
     try {
       const receipt: TransactionReceipt | null = await client
@@ -193,6 +229,8 @@ export async function watchTransaction(txHash: Hex): Promise<WatchResult> {
         .catch(() => null);
 
       if (receipt) {
+        options?.onIteration?.({ iteration, elapsedMs, hasReceipt: true, txKnown: null });
+
         if (receipt.status === "success") {
           return { status: "CONFIRMED", secondsPending: elapsed };
         }
@@ -209,8 +247,11 @@ export async function watchTransaction(txHash: Hex): Promise<WatchResult> {
             // failed in, so state changes that happened *after* do not
             // alter or mask the real revert reason.
             try {
+              // `account` (not `from`) sets the eth_call sender — viem drops
+              // `from` from the request, which would re-run the call as
+              // address(0) and mask the real revert reason.
               await client.call({
-                from: failedTx.from,
+                account: failedTx.from,
                 to: failedTx.to,
                 data: failedTx.input,
                 value: failedTx.value,
@@ -232,14 +273,37 @@ export async function watchTransaction(txHash: Hex): Promise<WatchResult> {
         .getTransaction({ hash: txHash })
         .catch(() => null);
 
+      options?.onIteration?.({
+        iteration,
+        elapsedMs,
+        hasReceipt: false,
+        txKnown: tx !== null,
+      });
+
       if (!tx) {
-        // Fully dropped from the mempool — gone
-        return { status: "DROPPED", secondsPending: elapsed };
+        // DROPPED only when the tx is really gone: either it was previously
+        // observed pending and has now vanished (genuine eviction), or it
+        // never surfaced in the pool we can see AND enough time has passed
+        // that it would have mined by now if it were going to. A fresh tx the
+        // RPC hasn't surfaced yet is a visibility lag, not an eviction.
+        if (everKnown || elapsedMs >= NEVER_SEEN_GRACE_MS) {
+          return { status: "DROPPED", secondsPending: elapsed };
+        }
+        // Keep polling — the node may simply not have surfaced the tx yet.
+      } else {
+        everKnown = true;
       }
 
       // Tx still pending in the mempool — keep waiting
     } catch {
       // RPC error mid-poll — do not abort, keep trying
+      options?.onIteration?.({
+        iteration,
+        elapsedMs,
+        hasReceipt: false,
+        txKnown: null,
+        error: "rpc",
+      });
     }
 
     const remaining = deadline - Date.now();

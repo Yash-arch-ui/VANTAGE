@@ -70,6 +70,23 @@ describe("decodeRevertReason — custom errors", () => {
     assert.equal(reason, 'Error(string): "MockERC20: insufficient balance"');
   });
 
+  it("decodes Error(string) in the standard ABI layout (selector + offset + length + data)", () => {
+    const selector = "0x08c379a0";
+    const msgBytes = new TextEncoder().encode("MockERC20: insufficient allowance");
+    const offsetHex = "0x" + 0x20n.toString(16).padStart(64, "0");
+    const lenHex = "0x" + msgBytes.length.toString(16).padStart(64, "0");
+    const msgHex = Array.from(msgBytes)
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("")
+      .padEnd(128, "0"); // string bytes padded to a full 32-byte word
+    const calldata = (`0x${selector.slice(2)}${offsetHex.slice(2)}${lenHex.slice(2)}${msgHex}`) as `0x${string}`;
+
+    const error = { data: calldata } as const;
+    const reason = decodeRevertReason(error);
+    console.log(`  Standard Error(string) decoded: ${reason}`);
+    assert.equal(reason, 'Error(string): "MockERC20: insufficient allowance"');
+  });
+
   it("decodes Panic(0x11) — arithmetic overflow/underflow", () => {
     const selector = "0x4e487b71";
     const codeHex = "0x" + 0x11n.toString(16).padStart(64, "0");
