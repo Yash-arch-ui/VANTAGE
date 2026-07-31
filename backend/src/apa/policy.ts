@@ -112,6 +112,33 @@ export function decidePolicy(forecast: PSGForecast): PolicyResult {
   return { action: "ABORT", reason: `Simulation reverted: ${detail}` };
 }
 
+/**
+ * Bias a finalized policy decision toward caution when the watchdog has active
+ * (undismissed) critical alerts on the target contract — the APA integration.
+ *
+ * The alert query itself lives in the caller (evaluate.ts reads the ledger via
+ * getActiveCriticalAlertCount) so this function stays pure policy, as unit-
+ * testable as decidePolicy.
+ *
+ *   activeCriticalAlerts <= 0            → result returned unchanged
+ *   action === PROCEED                   → WARN (a clean simulation must not
+ *                                           paper over a known on-chain alert)
+ *   WARN / HOLD / SUGGEST / ABORT        → action unchanged, reason annotated
+ */
+export function applyWatchdogBias(
+  result: PolicyResult,
+  activeCriticalAlerts: number,
+): PolicyResult {
+  if (!(activeCriticalAlerts > 0)) {
+    return result;
+  }
+  const note = `Watchdog: ${activeCriticalAlerts} active critical alert(s) on this contract. ${result.reason}`;
+  if (result.action === "PROCEED") {
+    return { action: "WARN", reason: note };
+  }
+  return { ...result, reason: note };
+}
+
 // ── 2. Hold & Recheck Loop ────────────────────────────────────────────
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));

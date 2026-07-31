@@ -4,7 +4,7 @@ import cors from "cors";
 import dotenv from "dotenv";
 import { config } from "./config.js";
 import { initDatabase } from "./em/ledger.js";
-import { startWatchdog } from "./services/watchdog.js";
+import { startWatchdog, WATCH_POLL_INTERVAL_MS } from "./services/watchdog.js";
 
 dotenv.config();
 
@@ -33,9 +33,11 @@ app.get("/health", (_req, res) => {
 import evaluateRouter from "./routes/evaluate.js";
 import outcomeRouter from "./routes/outcome.js";
 import statsRouter from "./routes/stats.js";
+import watchlistRouter from "./routes/watchlist.js";
 app.use("/api", evaluateRouter);
 app.use("/api", outcomeRouter);
 app.use("/api", statsRouter);
+app.use("/api", watchlistRouter);
 
 export { app };
 
@@ -44,5 +46,14 @@ export { app };
 if (process.env.VANTAGE_NO_LISTEN !== "1") {
   app.listen(PORT, () => {
     console.log(`Vantage backend listening on port ${PORT}`);
+    // Watchdog — background polling loop. Started only after the HTTP server
+    // is listening (spec order), never before. A start failure must not take
+    // the server down: the app stays up, it just won't monitor contracts.
+    try {
+      startWatchdog();
+      console.log(`[watchdog] started — polling every ${WATCH_POLL_INTERVAL_MS / 1000}s`);
+    } catch (err) {
+      console.error("[watchdog] failed to start — continuing without it:", err);
+    }
   });
 }

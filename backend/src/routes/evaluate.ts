@@ -5,9 +5,10 @@ import {
   decidePolicy,
   holdAndRecheck,
   explainPolicy,
+  applyWatchdogBias,
   type PolicyResult,
 } from "../apa/policy.js";
-import { recordEntry } from "../em/ledger.js";
+import { recordEntry, addToWatchlist, getActiveCriticalAlertCount } from "../em/ledger.js";
 
 const router = Router();
 
@@ -83,6 +84,17 @@ router.post("/evaluate", async (req: Request, res: Response) => {
       finalPolicy = initialPolicy;
     }
 
+    // 5b. Watchdog (APA) — if the target contract has active undismissed
+    //     critical alerts, bias the finalized decision toward caution and
+    //     record a flag, so a known on-chain problem can't be papered over by
+    //     a clean simulation. The reason carries the alert count (flags[]
+    //     pattern lives on the forecast; the bias lives on the policy).
+    const activeCriticalAlerts = getActiveCriticalAlertCount(tx.to);
+    if (activeCriticalAlerts > 0) {
+      finalPolicy = applyWatchdogBias(finalPolicy, activeCriticalAlerts);
+      forecast.flags.push("WATCHDOG_CRITICAL_ALERTS");
+    }
+
     // 6. Generate a human-readable explanation
     const explanation = await explainPolicy(forecast, finalPolicy);
 
@@ -97,6 +109,11 @@ router.post("/evaluate", async (req: Request, res: Response) => {
       policy: finalPolicy,
       explanation,
     });
+
+    // 7b. Watchdog — auto-watch: every contract that gets successfully
+    //     evaluated is watched automatically (INSERT OR IGNORE — idempotent,
+    //     never duplicates an existing entry, never fails the evaluate).
+    addToWatchlist(tx.to, "auto");
 
     // 8. Return the combined result
     res.json({

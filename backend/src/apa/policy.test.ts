@@ -6,6 +6,7 @@ import {
 } from "../psg/forecast.js";
 import {
   decidePolicy,
+  applyWatchdogBias,
   type PolicyAction,
 } from "./policy.js";
 
@@ -144,5 +145,43 @@ describe("explainPolicy — template fallback", () => {
     const text = await explainPolicy(forecast, policy);
     console.log(`  explain ABORT: ${text}`);
     assert.ok(text.includes("InsufficientOutputAmount"));
+  });
+});
+
+// ── applyWatchdogBias (W.5 — APA × watchdog integration) ───────────────
+
+describe("applyWatchdogBias", () => {
+  it("no alerts → result returned unchanged", () => {
+    const r = { action: "PROCEED" as const, reason: "All signals clear; no flags raised." };
+    assert.deepEqual(applyWatchdogBias(r, 0), r);
+  });
+
+  it("PROCEED + alerts → WARN with the watchdog note in the reason", () => {
+    const r = applyWatchdogBias({ action: "PROCEED" as const, reason: "clear" }, 2);
+    assert.equal(r.action, "WARN");
+    assert.ok(r.reason.startsWith("Watchdog: 2 active critical alert(s) on this contract."));
+    assert.ok(r.reason.includes("clear"), "original reason preserved");
+  });
+
+  it("WARN + alerts → stays WARN, reason annotated", () => {
+    const r = applyWatchdogBias({ action: "WARN" as const, reason: "MEDIUM risk" }, 1);
+    assert.equal(r.action, "WARN");
+    assert.ok(r.reason.includes("Watchdog: 1 active critical alert(s)"));
+    assert.ok(r.reason.includes("MEDIUM risk"));
+  });
+
+  it("ABORT + alerts → stays ABORT, reason annotated", () => {
+    const r = applyWatchdogBias({ action: "ABORT" as const, reason: "Unsafe to submit" }, 3);
+    assert.equal(r.action, "ABORT");
+    assert.ok(r.reason.startsWith("Watchdog: 3 active critical alert(s) on this contract."));
+  });
+
+  it("keeps suggestedAdjustment on a non-PROCEED result", () => {
+    const r = applyWatchdogBias(
+      { action: "SUGGEST_ADJUSTMENT" as const, reason: "timeout", suggestedAdjustment: "raise gas" },
+      1,
+    );
+    assert.equal(r.action, "SUGGEST_ADJUSTMENT");
+    assert.equal(r.suggestedAdjustment, "raise gas");
   });
 });
