@@ -8,6 +8,7 @@ import {
   checkValidity,
   getContentionScore,
   getPSGForecast,
+  contentionWindowFromBlock,
 } from "./forecast.js";
 
 /**
@@ -291,6 +292,49 @@ describe("checkValidity — three-way nonce logic (no live chain)", () => {
     });
     assert.ok("nonceIssue" in result);
     console.log(`  checkValidity GAP: nonceCurrent=${result.nonceCurrent}, nonceIssue=${result.nonceIssue}`);
+  });
+});
+
+// ── contentionWindowFromBlock — pure window math ───────────────────────
+
+describe("contentionWindowFromBlock — time-based window math", () => {
+  it("covers ~180s of activity based on block time (0.32s/block ≈ Monad)", () => {
+    // 180 / 0.32 = 562.5 → ceil → 563 blocks back
+    const from = contentionWindowFromBlock(49_559_477n, 0.32);
+    console.log(`  0.32s/block: fromBlock=${from}`);
+    assert.equal(from, 49_559_477n - 563n);
+  });
+
+  it("uses exactly 180 blocks when block time is 1s", () => {
+    const from = contentionWindowFromBlock(1_000_000n, 1);
+    console.log(`  1s/block: fromBlock=${from}`);
+    assert.equal(from, 1_000_000n - 180n);
+  });
+
+  it("uses fewer blocks for slower cadence (conservative → wider window)", () => {
+    // 180 / 2 = 90 blocks back (fallback estimate errs this way)
+    const from = contentionWindowFromBlock(1_000_000n, 2);
+    console.log(`  2s/block: fromBlock=${from}`);
+    assert.equal(from, 1_000_000n - 90n);
+  });
+
+  it("rounds up so the window is never shorter than 180s", () => {
+    // 180 / 3.5 = 51.43 → ceil → 52 blocks
+    const from = contentionWindowFromBlock(10_000n, 3.5);
+    console.log(`  3.5s/block: fromBlock=${from}`);
+    assert.equal(from, 10_000n - 52n);
+  });
+
+  it("clamps to 0 on a very young chain", () => {
+    const from = contentionWindowFromBlock(10n, 0.01);
+    console.log(`  young chain: fromBlock=${from}`);
+    assert.equal(from, 0n);
+  });
+
+  it("reaches exactly block 0 when the window spans the whole chain", () => {
+    const from = contentionWindowFromBlock(180n, 1);
+    console.log(`  edge: fromBlock=${from}`);
+    assert.equal(from, 0n);
   });
 });
 

@@ -496,10 +496,119 @@ export async function checkValidity(
 
 // ── Live Contention Scanner ────────────────────────────────────────────
 
+// Contention window is time-based (not block-count-based) so it captures a
+// fixed amount of real wall-clock activity regardless of block speed.
+const CONTENTION_WINDOW_SECONDS = 180; // ~3 minutes of activity
+const DEFAULT_BLOCK_TIME_SECONDS = 2; // conservative fallback — Monad testnet is faster, so this errs toward a wider window
+const BLOCK_TIME_SAMPLE_MS = 2_000; // how far apart the two block samples are taken
+const BLOCK_TIME_CACHE_TTL_MS = 60_000; // don't re-pay the sampling sleep on every poll iteration
+const LOG_QUERY_CHUNK_BLOCKS = 100n; // the Monad testnet RPC rejects a single eth_getLogs wider than ~100 blocks
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+let cachedBlockTimeSeconds: number | null = null;
+let cachedBlockTimeAt = 0;
+
+/**
+ * Estimate average block production time (seconds/block) by sampling the
+ * latest block twice a couple of seconds apart. Falls back to a fixed
+ * conservative estimate when the sample is degenerate or the RPC errors.
+ *
+ * Cached briefly so the hold-and-recheck poll loop does not re-pay the
+ * sampling sleep on every iteration.
+ */
+async function estimateBlockTime(
+  client: ReturnType<typeof createPublicClient>
+): Promise<number> {
+  if (
+    cachedBlockTimeSeconds !== null &&
+    Date.now() - cachedBlockTimeAt < BLOCK_TIME_CACHE_TTL_MS
+  ) {
+    return cachedBlockTimeSeconds;
+  }
+
+  const fallback = () => {
+    cachedBlockTimeSeconds = DEFAULT_BLOCK_TIME_SECONDS;
+    cachedBlockTimeAt = Date.now();
+    return DEFAULT_BLOCK_TIME_SECONDS;
+  };
+
+  try {
+    const first = await client.getBlock({ blockTag: "latest" });
+    await sleep(BLOCK_TIME_SAMPLE_MS);
+    const second = await client.getBlock({ blockTag: "latest" });
+
+    const firstNum = first.number;
+    const secondNum = second.number;
+    if (firstNum === null || secondNum === null) return fallback();
+
+    const blockDelta = secondNum - firstNum;
+    const timeDelta = Number(second.timestamp - first.timestamp);
+
+    // Need at least one new block and a measurable elapsed time to estimate.
+    if (blockDelta <= 0n || timeDelta <= 0) return fallback();
+
+    const blockTime = timeDelta / Number(blockDelta);
+    if (!Number.isFinite(blockTime) || blockTime <= 0) return fallback();
+
+    cachedBlockTimeSeconds = blockTime;
+    cachedBlockTimeAt = Date.now();
+    return blockTime;
+  } catch {
+    return fallback();
+  }
+}
+
+/**
+ * Block number roughly `CONTENTION_WINDOW_SECONDS` before `latestBlock`,
+ * given an estimated seconds-per-block cadence. Clamped to the chain start.
+ */
+export function contentionWindowFromBlock(
+  latestBlock: bigint,
+  blockTimeSeconds: number
+): bigint {
+  const blocksAgo = Math.ceil(CONTENTION_WINDOW_SECONDS / blockTimeSeconds);
+  const fromBlock = latestBlock - BigInt(blocksAgo);
+  return fromBlock < 0n ? 0n : fromBlock;
+}
+
+/**
+ * Fetch all logs for `address` across [fromBlock, toBlock], walking the
+ * range in ≤100-block chunks. The Monad testnet RPC caps a single
+ * eth_getLogs at ~100 blocks (HTTP 413), so a time-based window (~560
+ * blocks at ~0.32s/block) must be fetched piecewise.
+ */
+async function getLogsChunked(
+  client: ReturnType<typeof createPublicClient>,
+  address: Address,
+  fromBlock: bigint,
+  toBlock: bigint
+): Promise<unknown[]> {
+  const logs: unknown[] = [];
+  let cursor = fromBlock;
+
+  while (cursor <= toBlock) {
+    const chunkEnd =
+      cursor + LOG_QUERY_CHUNK_BLOCKS - 1n < toBlock
+        ? cursor + LOG_QUERY_CHUNK_BLOCKS - 1n
+        : toBlock;
+    const chunkLogs = await client.getLogs({
+      address,
+      fromBlock: cursor,
+      toBlock: chunkEnd,
+    });
+    logs.push(...chunkLogs);
+    if (chunkEnd >= toBlock) break;
+    cursor = chunkEnd + 1n;
+  }
+
+  return logs;
+}
+
 /**
  * Score recent call density for a target contract address.
- * Polls event logs over the last ~100 blocks and maps count to [0.0, 1.0].
- * 0 logs → 0.0,  20+ logs → 1.0.
+ * Polls event logs over the last ~3 minutes of activity and maps count to
+ * [0.0, 1.0].  0 logs → 0.0,  20+ logs → 1.0.
  */
 export async function getContentionScore(address: Address): Promise<number> {
   const client = getPublicClient();
@@ -507,14 +616,10 @@ export async function getContentionScore(address: Address): Promise<number> {
 
   try {
     const latestBlock = await client.getBlockNumber();
-    let fromBlock = latestBlock - 100n;
-    if (fromBlock < 0n) fromBlock = 0n;
+    const blockTimeSeconds = await estimateBlockTime(client);
+    const fromBlock = contentionWindowFromBlock(latestBlock, blockTimeSeconds);
 
-    const logs = await client.getLogs({
-      address,
-      fromBlock: BigInt(fromBlock),
-      toBlock: BigInt(latestBlock),
-    });
+    const logs = await getLogsChunked(client, address, fromBlock, latestBlock);
 
     return Math.min(logs.length / 20, 1.0);
   } catch {
