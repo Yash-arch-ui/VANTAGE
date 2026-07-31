@@ -13,6 +13,7 @@ import { readFileSync, existsSync } from "fs";
 import { fileURLToPath } from "url";
 import { dirname, resolve } from "path";
 import { config } from "../config.js";
+import { getThreshold, DEFAULT_HOLD_THRESHOLD } from "../em/calibrator.js";
 
 const { rpcUrl } = config;
 
@@ -643,7 +644,8 @@ export async function getContentionScore(address: Address): Promise<number> {
  */
 function deriveRiskLevel(
   flags: string[],
-  contentionScore: number | null
+  contentionScore: number | null,
+  holdThreshold: number = DEFAULT_HOLD_THRESHOLD
 ): "LOW" | "MEDIUM" | "HIGH" | "CRITICAL" {
   if (flags.includes("REVERT")) return "CRITICAL";
   if (
@@ -655,7 +657,8 @@ function deriveRiskLevel(
     return "HIGH";
   }
   if (flags.includes("HIGH_CONTENTION")) {
-    return contentionScore !== null && contentionScore >= 0.7 ? "HIGH" : "MEDIUM";
+    // Threshold is the per-contract calibrated value (default 0.7), not a constant.
+    return contentionScore !== null && contentionScore >= holdThreshold ? "HIGH" : "MEDIUM";
   }
   return "LOW";
 }
@@ -701,7 +704,10 @@ export async function getPSGForecast(
     flags.push("HIGH_CONTENTION");
   }
 
-  const riskLevel = deriveRiskLevel(flags, contentionScore);
+  // Hold threshold comes from the per-contract calibrated history, falling
+  // back to the 0.7 default when the ledger has no calibration yet.
+  const holdThreshold = getThreshold(tx.to);
+  const riskLevel = deriveRiskLevel(flags, contentionScore, holdThreshold);
 
   return {
     ...forecast,

@@ -7,6 +7,7 @@ import {
   explainPolicy,
   type PolicyResult,
 } from "../apa/policy.js";
+import { recordEntry } from "../em/ledger.js";
 
 const router = Router();
 
@@ -85,11 +86,24 @@ router.post("/evaluate", async (req: Request, res: Response) => {
     // 6. Generate a human-readable explanation
     const explanation = await explainPolicy(forecast, finalPolicy);
 
-    // 7. Return the combined result
+    // 7. Persist an immutable audit record (Execution Memory) before returning.
+    //    The frontend uses entryId later to report the tx outcome via /api/outcome.
+    const entryId = recordEntry({
+      txFrom: tx.from,
+      txTo: tx.to,
+      txData: tx.data,
+      txValue: tx.value.toString(),
+      forecast,
+      policy: finalPolicy,
+      explanation,
+    });
+
+    // 8. Return the combined result
     res.json({
       forecast,
       policy: finalPolicy,
       explanation,
+      entryId, // null when the ledger was unavailable — policy result still returned
     });
   } catch (err) {
     console.error("POST /evaluate — unexpected error:", err);
