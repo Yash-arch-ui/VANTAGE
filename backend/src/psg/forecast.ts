@@ -61,6 +61,9 @@ export const mockAmmAbi = parseAbi([
   "function getExpectedOutput(uint256 inputAmount, bool inputIsToken) view returns (uint256)",
   "function swap(uint256 minOutput, bool inputIsToken, uint256 inputAmount) payable",
   "function getReserves() view returns (uint256, uint256)",
+  "function owner() view returns (address)",
+  "function token() view returns (address)",
+  "function manipulateReserves(uint256 newTokenReserve, uint256 newMonReserve)",
 ]);
 
 export const mockClaimAbi = parseAbi([
@@ -634,6 +637,38 @@ export async function getContentionScore(address: Address): Promise<number> {
     return Math.min(logs.length / 20, 1.0);
   } catch {
     return 0;
+  }
+}
+
+/**
+ * Count logs for `address` over the trailing `windowMs` plus the wall-clock
+ * time of the most recent one. Reuses the chunked log walker so the Monad RPC
+ * per-request block cap is respected. Used by the watchdog for the inactivity
+ * alert — not a parallel scanner, just the existing one exposed with a window.
+ */
+export async function getRecentActivity(
+  client: ReturnType<typeof createPublicClient>,
+  address: Address,
+  windowMs: number,
+): Promise<{ logCount: number; lastLogAt: number | null }> {
+  try {
+    const latestBlock = await client.getBlockNumber();
+    const blockTimeSeconds = await estimateBlockTime(client);
+    const blocksAgo = Math.ceil(windowMs / 1000 / Math.max(blockTimeSeconds, 0.1));
+    const fromBlock = latestBlock - BigInt(blocksAgo);
+    const logs = await getLogsChunked(client, address, fromBlock < 0n ? 0n : fromBlock, latestBlock);
+
+    let lastLogAt: number | null = null;
+    if (logs.length > 0) {
+      const newest = logs[logs.length - 1] as { blockNumber?: bigint };
+      if (newest.blockNumber !== undefined) {
+        const block = await client.getBlock({ blockNumber: newest.blockNumber });
+        lastLogAt = Number(block.timestamp) * 1000;
+      }
+    }
+    return { logCount: logs.length, lastLogAt };
+  } catch {
+    return { logCount: 0, lastLogAt: null };
   }
 }
 

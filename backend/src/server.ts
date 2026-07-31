@@ -1,8 +1,10 @@
 import express from "express";
+import type { Server } from "node:http";
 import cors from "cors";
 import dotenv from "dotenv";
 import { config } from "./config.js";
 import { initDatabase } from "./em/ledger.js";
+import { startWatchdog } from "./services/watchdog.js";
 
 dotenv.config();
 

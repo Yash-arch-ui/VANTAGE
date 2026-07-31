@@ -75,11 +75,17 @@ export function initDatabase(dbPath: string): Database.Database {
     const database = new Database(dbPath);
     database.pragma("journal_mode = WAL");
 
-    const existing = database
-      .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
-      .get("execution_ledger");
+    const hasTable = (name: string): boolean =>
+      database
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
+        .get(name) !== undefined;
 
-    if (!existing) {
+    // Run the schema when ANY core table is missing. Every statement in
+    // schema.sql is CREATE ... IF NOT EXISTS, so this doubles as a safe,
+    // idempotent migration: existing tables are left untouched, and missing
+    // ones (e.g. the watchdog tables on a DB created before this module
+    // landed) are created on the next server start. Never wipes data.
+    if (!hasTable("execution_ledger") || !hasTable("watchlist")) {
       const schema = readFileSync(SCHEMA_PATH, "utf-8");
       database.exec(schema);
     }
@@ -293,5 +299,289 @@ export function upsertThreshold(
     ).run(contractAddress, holdThreshold, sampleCount, new Date().toISOString());
   } catch (err) {
     console.error(`[ledger] upsertThreshold failed for "${contractAddress}":`, err);
+  }
+}
+
+// ── Watchdog: watchlist + alerts ────────────────────────────────────────
+
+export type WatchlistRow = {
+  contract_address: string;
+  watch_type: string;
+  added_at: string;
+  last_checked: string | null;
+};
+
+export type AlertRow = {
+  id: string;
+  contract_address: string;
+  type: string;
+  severity: string;
+  message: string;
+  drift_pct: number | null;
+  is_read: number;
+  dismissed: number;
+  created_at: string;
+};
+
+export type NewAlertInput = {
+  contractAddress: string;
+  type: string;
+  severity: string;
+  message: string;
+  driftPct?: number | null;
+};
+
+export type AlertFilters = {
+  unread?: boolean;
+  severity?: string;
+  address?: string;
+  limit?: number;
+};
+
+export type AlertSummary = {
+  total: number;
+  unread: number;
+  critical: number;
+  bySeverity: Record<string, number>;
+};
+
+/** Add a contract to the watchlist. Idempotent (INSERT OR IGNORE). Returns true if newly added. */
+export function addToWatchlist(address: string, watchType: string): boolean {
+  if (!db) {
+    console.error("[ledger] addToWatchlist called before initDatabase — returning false");
+    return false;
+  }
+  try {
+    if (!ADDRESS_RE.test(address)) {
+      console.error(`[ledger] addToWatchlist: invalid address "${address}"`);
+      return false;
+    }
+    const info = db
+      .prepare(
+        "INSERT OR IGNORE INTO watchlist (contract_address, watch_type, added_at) VALUES (?, ?, ?)",
+      )
+      .run(address, watchType, new Date().toISOString());
+    return info.changes > 0;
+  } catch (err) {
+    console.error(`[ledger] addToWatchlist failed for "${address}":`, err);
+    return false;
+  }
+}
+
+/** Remove a contract from the watchlist. Alerts cascade-delete via the FK. */
+export function removeFromWatchlist(address: string): boolean {
+  if (!db) {
+    console.error("[ledger] removeFromWatchlist called before initDatabase — returning false");
+    return false;
+  }
+  try {
+    const info = db.prepare("DELETE FROM watchlist WHERE contract_address = ?").run(address);
+    return info.changes > 0;
+  } catch (err) {
+    console.error(`[ledger] removeFromWatchlist failed for "${address}":`, err);
+    return false;
+  }
+}
+
+/** All watched contracts, oldest first. */
+export function getWatchlist(): WatchlistRow[] {
+  if (!db) {
+    console.error("[ledger] getWatchlist called before initDatabase — returning []");
+    return [];
+  }
+  try {
+    return db
+      .prepare(
+        "SELECT contract_address, watch_type, added_at, last_checked FROM watchlist ORDER BY added_at ASC",
+      )
+      .all() as WatchlistRow[];
+  } catch (err) {
+    console.error("[ledger] getWatchlist failed:", err);
+    return [];
+  }
+}
+
+/** Record the timestamp of a completed poll for a watched contract. */
+export function setLastChecked(address: string, checkedAt: string): void {
+  if (!db) {
+    console.error("[ledger] setLastChecked called before initDatabase — no-op");
+    return;
+  }
+  try {
+    db.prepare("UPDATE watchlist SET last_checked = ? WHERE contract_address = ?").run(
+      checkedAt,
+      address,
+    );
+  } catch (err) {
+    console.error(`[ledger] setLastChecked failed for "${address}":`, err);
+  }
+}
+
+/**
+ * Insert an alert. Deduplicates: if an undismissed alert of the same
+ * (address, type) already exists, returns null instead of spamming rows every
+ * poll cycle. Returns the new alert id (or null when deduped / failed).
+ */
+export function insertAlert(input: NewAlertInput): string | null {
+  if (!db) {
+    console.error("[ledger] insertAlert called before initDatabase — returning null");
+    return null;
+  }
+  try {
+    const active = db
+      .prepare("SELECT id FROM alerts WHERE contract_address = ? AND type = ? AND dismissed = 0 LIMIT 1")
+      .get(input.contractAddress, input.type);
+    if (active !== undefined) return null;
+
+    const id = randomUUID();
+    db.prepare(
+      `INSERT INTO alerts (id, contract_address, type, severity, message, drift_pct, is_read, dismissed, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, 0, 0, ?)`,
+    ).run(
+      id,
+      input.contractAddress,
+      input.type,
+      input.severity,
+      input.message,
+      input.driftPct ?? null,
+      new Date().toISOString(),
+    );
+    return id;
+  } catch (err) {
+    console.error(`[ledger] insertAlert failed for ${input.contractAddress} ${input.type}:`, err);
+    return null;
+  }
+}
+
+/** True when an undismissed alert of this (address, type) is already present. */
+export function hasActiveAlert(address: string, type: string): boolean {
+  if (!db) {
+    console.error("[ledger] hasActiveAlert called before initDatabase — returning false");
+    return false;
+  }
+  try {
+    const row = db
+      .prepare("SELECT id FROM alerts WHERE contract_address = ? AND type = ? AND dismissed = 0 LIMIT 1")
+      .get(address, type);
+    return row !== undefined;
+  } catch (err) {
+    console.error(`[ledger] hasActiveAlert failed for ${address} ${type}:`, err);
+    return false;
+  }
+}
+
+/** Count of active (undismissed) critical alerts for a contract — used by the APA bias. */
+export function getActiveCriticalAlertCount(address: string): number {
+  if (!db) {
+    console.error("[ledger] getActiveCriticalAlertCount called before initDatabase — returning 0");
+    return 0;
+  }
+  try {
+    const row = db
+      .prepare(
+        "SELECT COUNT(*) AS c FROM alerts WHERE contract_address = ? AND severity = 'critical' AND dismissed = 0",
+      )
+      .get(address) as { c: number };
+    return row.c;
+  } catch (err) {
+    console.error(`[ledger] getActiveCriticalAlertCount failed for "${address}":`, err);
+    return 0;
+  }
+}
+
+/** List alerts with optional filters (address, severity, unread-only, limit). */
+export function getAlerts(filters: AlertFilters = {}): AlertRow[] {
+  if (!db) {
+    console.error("[ledger] getAlerts called before initDatabase — returning []");
+    return [];
+  }
+  try {
+    const where: string[] = [];
+    const params: unknown[] = [];
+
+    if (filters.address !== undefined) {
+      if (!ADDRESS_RE.test(filters.address)) {
+        console.error(`[ledger] getAlerts: invalid address "${filters.address}"`);
+        return [];
+      }
+      where.push("contract_address = ?");
+      params.push(filters.address);
+    }
+    if (filters.severity !== undefined) {
+      where.push("severity = ?");
+      params.push(filters.severity);
+    }
+    if (filters.unread === true) {
+      where.push("is_read = 0 AND dismissed = 0");
+    }
+
+    const limit = filters.limit !== undefined ? Math.min(Math.max(1, filters.limit), 100) : 100;
+    params.push(limit);
+
+    const sql = `SELECT * FROM alerts${where.length ? ` WHERE ${where.join(" AND ")}` : ""} ORDER BY created_at DESC LIMIT ?`;
+    return db.prepare(sql).all(...params) as AlertRow[];
+  } catch (err) {
+    console.error("[ledger] getAlerts failed:", err);
+    return [];
+  }
+}
+
+/** Toggle read / dismissed on one alert. Returns true if a row was updated. */
+export function updateAlert(
+  id: string,
+  patch: { read?: boolean; dismissed?: boolean },
+): boolean {
+  if (!db) {
+    console.error("[ledger] updateAlert called before initDatabase — returning false");
+    return false;
+  }
+  try {
+    const sets: string[] = [];
+    const params: unknown[] = [];
+    if (patch.read !== undefined) {
+      sets.push("is_read = ?");
+      params.push(patch.read ? 1 : 0);
+    }
+    if (patch.dismissed !== undefined) {
+      sets.push("dismissed = ?");
+      params.push(patch.dismissed ? 1 : 0);
+    }
+    if (sets.length === 0) return false;
+    params.push(id);
+    const info = db
+      .prepare(`UPDATE alerts SET ${sets.join(", ")} WHERE id = ?`)
+      .run(...params);
+    return info.changes > 0;
+  } catch (err) {
+    console.error(`[ledger] updateAlert failed for id "${id}":`, err);
+    return false;
+  }
+}
+
+/** Unread / critical / per-severity counts over all alerts. Never throws. */
+export function getAlertSummary(): AlertSummary {
+  const zeros = (): AlertSummary => ({ total: 0, unread: 0, critical: 0, bySeverity: {} });
+  if (!db) {
+    console.error("[ledger] getAlertSummary called before initDatabase — returning zeros");
+    return zeros();
+  }
+  try {
+    const total = (db.prepare("SELECT COUNT(*) AS c FROM alerts").get() as { c: number }).c;
+    const unread = (
+      db.prepare("SELECT COUNT(*) AS c FROM alerts WHERE is_read = 0 AND dismissed = 0").get() as { c: number }
+    ).c;
+    const critical = (
+      db.prepare("SELECT COUNT(*) AS c FROM alerts WHERE severity = 'critical' AND dismissed = 0").get() as { c: number }
+    ).c;
+    const bySeverity: Record<string, number> = {};
+    for (const row of db
+      .prepare("SELECT severity AS k, COUNT(*) AS c FROM alerts GROUP BY severity")
+      .all() as { k: string; c: number }[]) {
+      bySeverity[row.k] = row.c;
+    }
+    return { total, unread, critical, bySeverity };
+  } catch (err) {
+    console.error("[ledger] getAlertSummary failed:", err);
+    return zeros();
   }
 }
