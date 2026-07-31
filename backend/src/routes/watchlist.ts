@@ -56,6 +56,19 @@ router.post("/watchlist", (req: Request, res: Response) => {
     const { address, watchType } = parsed.data;
     const added = addToWatchlist(address, watchType ?? "manual");
     const items = getWatchlist();
+    if (!added) {
+      // INSERT OR IGNORE means the address was already watched — the route
+      // surfaces that as 409 rather than silently pretending it was added.
+      res.status(409).json({
+        ok: false,
+        error: "AlreadyWatching",
+        message: "Contract is already on the watchlist",
+        address,
+        watchType: watchType ?? "manual",
+        items,
+      });
+      return;
+    }
     res.status(201).json({ ok: true, address, watchType: watchType ?? "manual", added, items });
   } catch (err) {
     console.error("POST /watchlist — unexpected error:", err);

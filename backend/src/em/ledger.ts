@@ -511,8 +511,11 @@ export function getAlerts(filters: AlertFilters = {}): AlertRow[] {
       where.push("severity = ?");
       params.push(filters.severity);
     }
+    // Dismissed alerts are hidden from every list view by default — a dismissed
+    // alert is removed from the queue, never deleted (the row stays in the DB).
+    where.push("dismissed = 0");
     if (filters.unread === true) {
-      where.push("is_read = 0 AND dismissed = 0");
+      where.push("is_read = 0");
     }
 
     const limit = filters.limit !== undefined ? Math.min(Math.max(1, filters.limit), 100) : 100;

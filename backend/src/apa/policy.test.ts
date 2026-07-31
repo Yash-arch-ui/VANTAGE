@@ -1,9 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import {
-  type PSGForecast,
-  type VantageTxRequest,
-} from "../psg/forecast.js";
+import { type PSGForecast } from "../psg/forecast.js";
 import {
   decidePolicy,
   applyWatchdogBias,
