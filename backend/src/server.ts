@@ -34,10 +34,12 @@ import evaluateRouter from "./routes/evaluate.js";
 import outcomeRouter from "./routes/outcome.js";
 import statsRouter from "./routes/stats.js";
 import watchlistRouter from "./routes/watchlist.js";
+import scoreRouter from "./routes/score.js";
 app.use("/api", evaluateRouter);
 app.use("/api", outcomeRouter);
 app.use("/api", statsRouter);
 app.use("/api", watchlistRouter);
+app.use("/api", scoreRouter);
 
 export { app };
 

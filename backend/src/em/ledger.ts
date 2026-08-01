@@ -257,6 +257,32 @@ export function getEntryById(id: string): ExecutionLedgerRow | null {
   }
 }
 
+/**
+ * All-time evaluation count for a contract — the "sample size" a trust score
+ * is built on. Distinct from getEntriesForContract (time-windowed): a long
+ * clean history should be visible even when nothing was evaluated recently.
+ * The address is validated like every other contract query.
+ */
+export function countEvaluations(address: string): number {
+  if (!db) {
+    console.error("[ledger] countEvaluations called before initDatabase — returning 0");
+    return 0;
+  }
+  try {
+    if (!ADDRESS_RE.test(address)) {
+      console.error(`[ledger] countEvaluations: invalid address format "${address}"`);
+      return 0;
+    }
+    const row = db
+      .prepare("SELECT COUNT(*) AS c FROM execution_ledger WHERE tx_to = ?")
+      .get(address) as { c: number };
+    return row.c;
+  } catch (err) {
+    console.error(`[ledger] countEvaluations failed for "${address}":`, err);
+    return 0;
+  }
+}
+
 // ── Calibration store ───────────────────────────────────────────────────
 
 /** Read the calibrated hold threshold for a contract, or null when never calibrated. */

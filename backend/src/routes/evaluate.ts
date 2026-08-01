@@ -9,6 +9,7 @@ import {
   type PolicyResult,
 } from "../apa/policy.js";
 import { recordEntry, addToWatchlist, getActiveCriticalAlertCount } from "../em/ledger.js";
+import { computeScore } from "../services/scoring.js";
 
 const router = Router();
 
@@ -115,9 +116,17 @@ router.post("/evaluate", async (req: Request, res: Response) => {
     //     never duplicates an existing entry, never fails the evaluate).
     addToWatchlist(tx.to, "auto");
 
+    // 7c. Vantage Score — a live 0-100 trust score for the target contract,
+    //     attached to the forecast so the judge sees it beside the risk output.
+    //     The contention input is the forecast's own score this request already
+    //     computed — never a re-scan of the chain; the rest is pure aggregation
+    //     over the execution-memory tables the request already lives next to.
+    //     Runs after recordEntry so the score reflects this very evaluation.
+    const score = computeScore(tx.to, forecast.contentionScore);
+
     // 8. Return the combined result
     res.json({
-      forecast,
+      forecast: { ...forecast, score },
       policy: finalPolicy,
       explanation,
       entryId, // null when the ledger was unavailable — policy result still returned
