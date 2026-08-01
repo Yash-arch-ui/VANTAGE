@@ -75,6 +75,13 @@ export const mockClaimAbi = parseAbi([
   "function remainingSlots() view returns (uint256)",
 ]);
 
+// ERC-20 surface used only to recognise approve() calldata for the
+// approval-exposure signal — deliberately minimal, not the full ERC-20.
+const erc20ApproveAbi = parseAbi([
+  "function approve(address spender, uint256 amount) returns (bool)",
+  "function balanceOf(address owner) view returns (uint256)",
+]);
+
 export const KNOWN_CONTRACTS = new Map<Address, { abi: readonly unknown[]; name: string }>([
   [MOCK_AMM_ADDRESS, { abi: mockAmmAbi, name: "MockAMM" }],
   [MOCK_CLAIM_ADDRESS, { abi: mockClaimAbi, name: "MockClaim" }],
@@ -676,6 +683,44 @@ export async function getRecentActivity(
   }
 }
 
+// ── Approval-exposure signal (approve-shaped calldata) ─────────────────
+
+/**
+ * Recognise an ERC-20 approve(spender, amount) call and decide whether it
+ * grants the spender a large share of the sender's balance (>= 50%, mirroring
+ * the watchdog's checkApprovalExposure threshold). Surfaced as the
+ * APPROVAL_EXPOSURE forecast flag so the Guard console's "Unlimited approval"
+ * card exercises the approval-exposure module synchronously in /api/evaluate —
+ * not only via the background watchdog poll. Never throws: any unreadable or
+ * non-approve call, or an account with no balance, is simply not flagged.
+ */
+async function checkApprovalExposure(tx: VantageTxRequest): Promise<boolean> {
+  const client = getPublicClient();
+  if (!client) return false;
+  try {
+    let decoded: { functionName: string; args: readonly unknown[] };
+    try {
+      decoded = decodeFunctionData({ abi: erc20ApproveAbi, data: tx.data });
+    } catch {
+      return false; // not an approve() call — leave untouched
+    }
+    if (decoded.functionName !== "approve") return false;
+    const amount = decoded.args[1] as bigint;
+    const balance = await client
+      .readContract({
+        address: tx.to,
+        abi: erc20ApproveAbi,
+        functionName: "balanceOf",
+        args: [tx.from],
+      })
+      .catch(() => 0n);
+    if (balance === 0n) return false; // nothing exposed to compare against
+    return amount >= (balance * 50n) / 100n; // same >= 0.5 ratio as the watchdog
+  } catch {
+    return false;
+  }
+}
+
 // ── Top-level PSG aggregator ───────────────────────────────────────────
 
 /**
@@ -699,6 +744,9 @@ function deriveRiskLevel(
     // Threshold is the per-contract calibrated value (default 0.7), not a constant.
     return contentionScore !== null && contentionScore >= holdThreshold ? "HIGH" : "MEDIUM";
   }
+  // An unlimited/large approval warrants caution, not a stop — same severity
+  // as the watchdog's approval_exposure warning.
+  if (flags.includes("APPROVAL_EXPOSURE")) return "MEDIUM";
   return "LOW";
 }
 
@@ -711,10 +759,11 @@ export async function getPSGForecast(
   tx: VantageTxRequest,
   quotedOutput?: bigint
 ): Promise<PSGForecast> {
-  const [forecast, validity, contentionScore] = await Promise.all([
+  const [forecast, validity, contentionScore, approvalExposure] = await Promise.all([
     getForecast(tx, quotedOutput),
     checkValidity(tx),
     getContentionScore(tx.to),
+    checkApprovalExposure(tx),
   ]);
 
   const flags: string[] = [];
@@ -741,6 +790,10 @@ export async function getPSGForecast(
 
   if (contentionScore >= 0.3) {
     flags.push("HIGH_CONTENTION");
+  }
+
+  if (approvalExposure) {
+    flags.push("APPROVAL_EXPOSURE");
   }
 
   // Hold threshold comes from the per-contract calibrated history, falling

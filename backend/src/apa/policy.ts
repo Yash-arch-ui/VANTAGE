@@ -605,7 +605,11 @@ function templateExplain(forecast: PSGForecast, policy: PolicyResult): string {
       const details = forecast.flags.length
         ? ` Flags: ${forecast.flags.join(", ")}.`
         : "";
-      return `Risk level is MEDIUM.${details} Proceed with caution.`;
+      // Must state the forecast's actual riskLevel — a WARN action can carry a
+      // LOW forecast (e.g. a clean PROCEED that the watchdog bias escalated to
+      // WARN), and hardcoding "MEDIUM" here made the explanation contradict the
+      // risk badge rendered from forecast.riskLevel.
+      return `Risk level is ${forecast.riskLevel}.${details} Proceed with caution.`;
     }
 
     case "HOLD_AND_RECHECK":
