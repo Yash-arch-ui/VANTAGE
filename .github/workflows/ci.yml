@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A newer push to the same branch makes an in-flight run obsolete.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - name: Typecheck
+        run: npx tsc --noEmit
+      - name: Test
+        run: npm test
+        env:
+          # Several suites reach the public Monad testnet RPC and assert on
+          # graceful degradation when it is unreachable, so no key is needed.
+          RPC_URL: https://testnet-rpc.monad.xyz
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - name: Lint
+        run: npx eslint src vite.config.ts
+      - name: Typecheck
+        # The router plugin generates routeTree.gen.ts during a build, and it is
+        # not committed, so a build has to precede the typecheck.
+        run: npm run build && npx tsc --noEmit
+        env:
+          VITE_API_URL: http://localhost:4000
+          VITE_RPC_URL: https://testnet-rpc.monad.xyz
+          VITE_CHAIN_ID: "10143"
+      - name: Test
+        run: npx vitest run

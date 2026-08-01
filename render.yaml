@@ -1,0 +1,37 @@
+# Render blueprint for the Vantage backend.
+#
+# The disk is not optional. The whole execution-memory story — the audit
+# ledger, contract scores, and the per-contract contention thresholds that
+# recalibrate from real outcomes — lives in a SQLite file. Without a persistent
+# disk that file is wiped on every deploy and all of it resets to zero.
+services:
+  - type: web
+    name: vantage-backend
+    runtime: node
+    plan: starter # NOT free: the free tier sleeps, and a sleeping service stops the 15s watchdog poll
+    region: oregon
+    rootDir: backend
+    buildCommand: npm ci && npm run build
+    startCommand: node dist/server.js
+    healthCheckPath: /health
+    disk:
+      name: vantage-data
+      mountPath: /data
+      sizeGB: 1
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: DATABASE_PATH
+        value: /data/vantage.db
+      - key: RPC_URL
+        value: https://testnet-rpc.monad.xyz
+      - key: MONAD_CHAIN_ID
+        value: "10143"
+      # Only used to derive the observer address for approval-exposure alerts.
+      # Store WITHOUT the 0x prefix — the code prepends it.
+      - key: PRIVATE_KEY
+        sync: false
+      # Optional. Absent means deterministic template explanations instead of
+      # LLM ones; the service runs fine either way.
+      - key: GEMINI_API_KEY
+        sync: false

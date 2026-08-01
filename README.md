@@ -69,6 +69,29 @@ cd frontend && npm install && npm run dev    # :3000
 
 `GEMINI_API_KEY` is optional — without it the explainer falls back to deterministic templates.
 
+## Deployment
+
+**Backend → Render** (`render.yaml`). The persistent disk at `/data` is not optional: the audit
+ledger, contract scores and the per-contract contention thresholds all live in a SQLite file, and
+without the disk they reset on every deploy. The service also must not be on a sleeping free tier,
+or the 15-second watchdog poll stops and no alerts are ever raised.
+
+Set `PRIVATE_KEY` (no `0x` prefix) and optionally `GEMINI_API_KEY` in the Render dashboard.
+
+**Frontend → Vercel.** Root directory `frontend`. The Nitro build targets the Vercel preset by
+default; set `SERVER_PRESET=node-server` for a container build instead. Required env:
+
+```
+VITE_API_URL=https://<your-render-service>.onrender.com
+VITE_RPC_URL=https://testnet-rpc.monad.xyz
+VITE_CHAIN_ID=10143
+```
+
+`VITE_*` values are inlined at **build** time — changing the API URL needs a redeploy, not a restart.
+
+Backend CORS is currently `origin: true` (any origin). Tighten it to the deployed frontend origin
+before this is anything more than a demo.
+
 ## Proof scripts
 
 Everything the pitch claims is demonstrated by a script against real Monad testnet state:
