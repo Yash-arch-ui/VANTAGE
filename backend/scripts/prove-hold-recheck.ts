@@ -22,7 +22,7 @@ async function main() {
 
   console.log("\n=== 3. holdAndRecheck polling (interval 1500ms, timeout 12000ms) ===");
   const start = Date.now();
-  const result = await holdAndRecheck(tx, quoted, { intervalMs: 1500, timeoutMs: 12000 });
+  const { policy: result } = await holdAndRecheck(tx, quoted, { intervalMs: 1500, timeoutMs: 12000 });
   const elapsed = ((Date.now() - start) / 1000).toFixed(1);
   console.log(`\nResolved in ${elapsed}s`);
   console.log(`final action=${result.action}`);

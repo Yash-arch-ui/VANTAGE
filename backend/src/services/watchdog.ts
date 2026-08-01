@@ -28,6 +28,9 @@ import {
   insertAlert,
   setLastChecked,
   getEntriesForContract,
+  resolveAlerts,
+  expireStaleAlerts,
+  pruneAutoWatchlist,
 } from "../em/ledger.js";
 
 // ── Demo constants (from the spec) ──────────────────────────────────────
@@ -76,6 +79,16 @@ let _observer: Address | null = null;
 
 const snapshots = new Map<Address, ContractSnapshot>();
 
+/**
+ * Last time each contract's hold threshold was recalibrated from watchdog
+ * observations. Calibration is meant to be event-driven (one real outcome, one
+ * adjustment); without a cooldown the poll loop turns it into exponential decay.
+ */
+const lastRecalibrated = new Map<Address, number>();
+
+/** Roughly one adjustment per failure-surge window, not one per poll. */
+const RECALIBRATE_COOLDOWN_MS = 5 * 60_000;
+
 function getPublicClient(): Client {
   if (!_publicClient) {
     _publicClient = createPublicClient({
@@ -91,10 +104,20 @@ function getObserverAddress(): Address {
   if (_observer) return _observer;
   if (config.privateKey) {
     try {
-      _observer = privateKeyToAccount(`0x${config.privateKey}`).address;
+      // Tolerate a key that already carries the prefix. Blindly prepending
+      // produced "0x0x…", which threw and fell through to the zero address with
+      // no log at all — approval_exposure then read an allowance of 0 for every
+      // contract and silently never fired again.
+      const key = config.privateKey.startsWith("0x")
+        ? config.privateKey
+        : `0x${config.privateKey}`;
+      _observer = privateKeyToAccount(key as `0x${string}`).address;
       return _observer;
-    } catch {
-      // fall through to the zero address — approval checks simply read 0
+    } catch (err) {
+      console.error(
+        "[watchdog] PRIVATE_KEY is not a valid key — approval-exposure alerts are disabled:",
+        err,
+      );
     }
   }
   _observer = "0x0000000000000000000000000000000000000000";
@@ -111,8 +134,12 @@ async function readReserves(client: Client, address: Address): Promise<Reserves 
       functionName: "getReserves",
     })) as [bigint, bigint];
     return { tokenReserve, monReserve };
-  } catch {
-    return null; // not an AMM — no reserve metrics
+  } catch (err) {
+    // Ambiguous by nature: a non-AMM contract and an unreachable node look the
+    // same here. Log it so a silent monitoring outage is at least visible —
+    // reserve-drift detection switches off for this contract either way.
+    console.debug(`[watchdog] no reserves for ${address} (not an AMM, or the read failed):`, err);
+    return null;
   }
 }
 
@@ -208,9 +235,13 @@ export function compareSnapshots(
 export async function pollContract(
   address: Address,
   previous: ContractSnapshot | null,
-): Promise<{ snapshot: ContractSnapshot; alerts: AlertCandidate[] }> {
+): Promise<{ snapshot: ContractSnapshot; alerts: AlertCandidate[]; cleared: string[] }> {
   const client = getPublicClient();
   const alerts: AlertCandidate[] = [];
+  // Conditions this poll positively observed to be absent. An alert is a claim
+  // about the present, so an observation that the condition has gone is what
+  // retracts it.
+  const cleared: string[] = [];
 
   // 3. Failure surge — recent evaluation history from the EM ledger.
   try {
@@ -226,8 +257,19 @@ export async function pollContract(
           severity: "critical",
           message: `Recent failure rate ${(rate * 100).toFixed(1)}% (${failures}/${entries.length} in last ${FAILURE_SURGE_WINDOW_MINUTES}min) exceeds ${(FAILURE_SURGE_RATE * 100).toFixed(0)}%`,
         });
-        // Let the real calibrator adapt the hold threshold to what we saw.
-        recalibrate(address);
+        // Let the real calibrator adapt the hold threshold to what we saw —
+        // but at most once per cooldown. This used to run on every cycle while
+        // the rate stayed high, multiplying the threshold by 0.9 four times a
+        // minute and driving 0.7 to the 0.3 floor in under two minutes, purely
+        // as a function of wall-clock time against a ledger window whose
+        // contents had not changed at all.
+        const lastCalibrated = lastRecalibrated.get(address) ?? 0;
+        if (Date.now() - lastCalibrated >= RECALIBRATE_COOLDOWN_MS) {
+          recalibrate(address);
+          lastRecalibrated.set(address, Date.now());
+        }
+      } else {
+        cleared.push("failure_surge");
       }
     }
   } catch (err) {
@@ -243,6 +285,10 @@ export async function pollContract(
         severity: "warning",
         message: `Observer has a large outstanding approval to this contract (allowance=${exposure.allowance}, balance=${exposure.balance}, ~${(exposure.ratio * 100).toFixed(0)}% of balance)`,
       });
+    } else if (exposure) {
+      // The allowance was readable and is no longer excessive — revoked, spent
+      // down, or the balance grew past it.
+      cleared.push("approval_exposure");
     }
   } catch (err) {
     console.error(`[watchdog] approval_exposure check failed for ${address}:`, err);
@@ -257,6 +303,8 @@ export async function pollContract(
         severity: "info",
         message: `No contract activity in the last ${INACTIVITY_WINDOW_MS / 60_000} minutes`,
       });
+    } else {
+      cleared.push("inactivity");
     }
   } catch (err) {
     console.error(`[watchdog] inactivity check failed for ${address}:`, err);
@@ -283,7 +331,7 @@ export async function pollContract(
     timestamp: Date.now(),
   };
 
-  return { snapshot, alerts };
+  return { snapshot, alerts, cleared };
 }
 
 // ── The loop ────────────────────────────────────────────────────────────
@@ -294,18 +342,66 @@ let cycle = 0;
  * One full sweep over every watched contract. Any single contract's failure
  * is logged and skipped — it must never abort the sweep.
  */
+/**
+ * An alert nobody has re-observed for this long is retired. A condition can
+ * stop being observable without the watchdog ever seeing it clear — the
+ * contract leaves the watchlist, the RPC is down for a stretch, the process
+ * restarts — and those alerts would otherwise degrade the contract's score
+ * forever.
+ */
+const ALERT_MAX_AGE_MS = 60 * 60_000;
+
+/**
+ * Upper bound on auto-watched contracts. Each one costs ~25-30 RPC round-trips
+ * per cycle, so without a ceiling the sweep eventually cannot finish inside its
+ * own interval. Manual entries are never counted or evicted.
+ */
+const MAX_AUTO_WATCHED = 25;
+
 async function pollAll(): Promise<void> {
+  const evicted = pruneAutoWatchlist(MAX_AUTO_WATCHED);
+  if (evicted > 0) {
+    console.log(`[watchdog] evicted ${evicted} least-recent auto-watched contract(s)`);
+  }
+
   const watched = getWatchlist();
   cycle++;
+
+  const expired = expireStaleAlerts(ALERT_MAX_AGE_MS);
+  if (expired > 0) {
+    console.log(`[watchdog] expired ${expired} stale alert(s) older than ${ALERT_MAX_AGE_MS / 60_000}min`);
+  }
   console.log(`[watchdog] poll cycle #${cycle} at ${new Date().toISOString()} — ${watched.length} watched contract(s)`);
+
+  // Forget contracts that are no longer watched. `snapshots` was write-only, so
+  // it grew for the lifetime of the process and held reserve baselines for
+  // contracts that had been removed.
+  const live = new Set(watched.map((row) => row.contract_address.toLowerCase()));
+  for (const key of snapshots.keys()) {
+    if (!live.has(key.toLowerCase())) {
+      snapshots.delete(key);
+      lastRecalibrated.delete(key);
+    }
+  }
 
   for (const row of watched) {
     const address = row.contract_address as Address;
     try {
       const previous = snapshots.get(address) ?? null;
-      const { snapshot, alerts } = await pollContract(address, previous);
+      const { snapshot, alerts, cleared } = await pollContract(address, previous);
       snapshots.set(address, snapshot);
       setLastChecked(address, new Date().toISOString());
+
+      // Retract alerts whose condition this poll observed to be gone. Without
+      // this an alert lived until a human dismissed it, so a single transient
+      // failure surge biased every later verdict on the contract to WARN and
+      // held its score down permanently.
+      for (const type of cleared) {
+        const resolved = resolveAlerts(address, type);
+        if (resolved > 0) {
+          console.log(`[watchdog] RESOLVED ${address} ${type} — condition no longer present`);
+        }
+      }
 
       for (const a of alerts) {
         const id = insertAlert({
@@ -340,15 +436,30 @@ export function startWatchdog(
 ): { stop: () => void } {
   const pollIntervalMs = options.pollIntervalMs ?? WATCH_POLL_INTERVAL_MS;
 
-  void pollAll().catch((err) =>
-    console.error("[watchdog] poll cycle failed:", err),
-  );
+  // A single contract costs ~25-30 RPC round-trips per cycle (getRecentActivity
+  // alone chunks a 10-minute window into ~19 eth_getLogs), so on a public RPC a
+  // cycle can easily outrun the 15s interval. Without this guard cycles stacked
+  // and their `snapshots.set` writes raced — a slow cycle finishing late would
+  // overwrite a newer baseline, and the next comparison would diff against the
+  // wrong reserves and emit phantom drift alerts.
+  let inFlight = false;
 
-  const timer = setInterval(() => {
-    void pollAll().catch((err) =>
-      console.error("[watchdog] poll cycle failed:", err),
-    );
-  }, pollIntervalMs);
+  const runCycle = (): void => {
+    if (inFlight) {
+      console.warn("[watchdog] previous cycle still running — skipping this tick");
+      return;
+    }
+    inFlight = true;
+    void pollAll()
+      .catch((err) => console.error("[watchdog] poll cycle failed:", err))
+      .finally(() => {
+        inFlight = false;
+      });
+  };
+
+  runCycle();
+
+  const timer = setInterval(runCycle, pollIntervalMs);
   timer.unref?.(); // don't keep the process alive solely for the watchdog
 
   return { stop: () => clearInterval(timer) };

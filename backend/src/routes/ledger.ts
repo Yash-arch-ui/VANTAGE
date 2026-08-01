@@ -8,7 +8,9 @@ const router = Router();
 // shape — the clamping to a sane page size lives in getRecentEntries so every
 // caller of that function gets the same guarantee.
 const querySchema = z.object({
-  limit: z.string().regex(/^\d+$/, "limit must be a positive integer").optional(),
+  // Rejects "0" explicitly: it passed \d+ and was then clamped up to 1, so a
+  // client asking for no rows silently got one.
+  limit: z.string().regex(/^[1-9]\d*$/, "limit must be a positive integer").optional(),
   offset: z.string().regex(/^\d+$/, "offset must be a non-negative integer").optional(),
   contract: z
     .string()

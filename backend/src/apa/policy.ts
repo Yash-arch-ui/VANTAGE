@@ -1,7 +1,10 @@
 import {
   createPublicClient,
   http,
+  TransactionNotFoundError,
+  TransactionReceiptNotFoundError,
   type Hex,
+  type Transaction,
   type TransactionReceipt,
 } from "viem";
 import { monadTestnet } from "viem/chains";
@@ -107,9 +110,20 @@ export function decidePolicy(forecast: PSGForecast): PolicyResult {
     return { action: "WARN", reason: `Unhandled HIGH risk. Flags: ${flags.join(", ")}.` };
   }
 
-  // riskLevel === "CRITICAL"
-  const detail = revertReason ?? "unknown revert";
-  return { action: "ABORT", reason: `Simulation reverted: ${detail}` };
+  if (riskLevel === "CRITICAL") {
+    const detail = revertReason ?? "unknown revert";
+    return { action: "ABORT", reason: `Simulation reverted: ${detail}` };
+  }
+
+  // Everything else — in practice a LOW forecast carrying flags, since the LOW
+  // branch above requires none. This used to fall through to the CRITICAL tail
+  // and abort a clean transaction while inventing "Simulation reverted: unknown
+  // revert" as the justification. Warn on the flags we actually have instead of
+  // asserting a revert that never happened.
+  return {
+    action: "WARN",
+    reason: `Risk level ${riskLevel} with flags: ${flags.join(", ")}. Review before submitting.`,
+  };
 }
 
 /**
@@ -148,6 +162,21 @@ type HoldRecheckOptions = {
   timeoutMs?: number;
 };
 
+export type HoldRecheckResult = {
+  policy: PolicyResult;
+  /**
+   * The forecast the returned policy was actually derived from, or null when
+   * the hold timed out without a usable re-check.
+   *
+   * This is returned, not discarded, because the caller must not pair a fresh
+   * decision with the stale forecast that triggered the hold: contention
+   * clearing would otherwise produce a PROCEED verdict displayed and recorded
+   * alongside riskLevel HIGH and flags ["HIGH_CONTENTION"] — an audit row whose
+   * own evidence contradicts its decision.
+   */
+  forecast: PSGForecast | null;
+};
+
 /**
  * Poll `getPSGForecast` on an interval until the action resolves away from
  * HOLD_AND_RECHECK, or until the timeout is reached.
@@ -158,18 +187,23 @@ export async function holdAndRecheck(
   tx: VantageTxRequest,
   quotedOutput: bigint | undefined,
   options?: HoldRecheckOptions,
-): Promise<PolicyResult> {
+): Promise<HoldRecheckResult> {
   const intervalMs = options?.intervalMs ?? 3_000;
   const timeoutMs = options?.timeoutMs ?? 30_000;
   const deadline = Date.now() + timeoutMs;
 
+  // Kept so a timeout still reports the freshest picture we managed to get,
+  // rather than the one from before the wait.
+  let latest: PSGForecast | null = null;
+
   while (Date.now() < deadline) {
     try {
       const forecast = await getPSGForecast(tx, quotedOutput);
+      latest = forecast;
       const result = decidePolicy(forecast);
 
       if (result.action !== "HOLD_AND_RECHECK") {
-        return result;
+        return { policy: result, forecast };
       }
     } catch {
       // Transient RPC error — continue polling
@@ -181,10 +215,13 @@ export async function holdAndRecheck(
   }
 
   return {
-    action: "SUGGEST_ADJUSTMENT",
-    reason: "Contention did not clear within timeout.",
-    suggestedAdjustment:
-      "Try increasing gas or waiting for network activity to settle.",
+    policy: {
+      action: "SUGGEST_ADJUSTMENT",
+      reason: "Contention did not clear within timeout.",
+      suggestedAdjustment:
+        "Try increasing gas or waiting for network activity to settle.",
+    },
+    forecast: latest,
   };
 }
 
@@ -218,6 +255,56 @@ export type WatchTransactionOptions = {
  * eth_getTransactionByHash.
  */
 const NEVER_SEEN_GRACE_MS = 10_000;
+
+/**
+ * The outcome of one chain lookup.
+ *
+ * `.catch(() => null)` cannot express the distinction that matters here: "the
+ * node says this transaction does not exist" and "the node did not answer" are
+ * completely different facts, and collapsing them makes an RPC outage look like
+ * evidence that a transaction was dropped.
+ */
+type Lookup<T> = { reachable: true; value: T | null } | { reachable: false };
+
+/**
+ * Invoke the caller's observer without letting it break the watch.
+ *
+ * watchTransaction documents that it never throws, but one of these calls sits
+ * inside the catch block, so a throwing observer there propagated straight out.
+ * An observer is for reporting progress; it must never decide the outcome.
+ */
+function notifyIteration(options: WatchTransactionOptions | undefined, poll: WatchPoll): void {
+  try {
+    options?.onIteration?.(poll);
+  } catch (err) {
+    console.error("[watch] onIteration callback threw — continuing:", err);
+  }
+}
+
+/** Not-found is an answer; anything else means we could not see the chain. */
+async function lookupReceipt(
+  client: NonNullable<ReturnType<typeof getPublicClient>>,
+  txHash: Hex,
+): Promise<Lookup<TransactionReceipt>> {
+  try {
+    return { reachable: true, value: await client.getTransactionReceipt({ hash: txHash }) };
+  } catch (err) {
+    if (err instanceof TransactionReceiptNotFoundError) return { reachable: true, value: null };
+    return { reachable: false };
+  }
+}
+
+async function lookupTransaction(
+  client: NonNullable<ReturnType<typeof getPublicClient>>,
+  txHash: Hex,
+): Promise<Lookup<Transaction>> {
+  try {
+    return { reachable: true, value: await client.getTransaction({ hash: txHash }) };
+  } catch (err) {
+    if (err instanceof TransactionNotFoundError) return { reachable: true, value: null };
+    return { reachable: false };
+  }
+}
 
 /**
  * Re-run a reverted transaction as an eth_call pinned to the exact block it
@@ -285,12 +372,27 @@ export async function watchTransaction(
     const elapsed = Math.floor(elapsedMs / 1000);
 
     try {
-      const receipt: TransactionReceipt | null = await client
-        .getTransactionReceipt({ hash: txHash })
-        .catch(() => null);
+      const receiptLookup = await lookupReceipt(client, txHash);
+      if (!receiptLookup.reachable) {
+        // Could not see the chain this poll. Report it as an RPC error and keep
+        // trying — treating it as "no receipt" would let the not-found branch
+        // below conclude the transaction was evicted.
+        notifyIteration(options, {
+          iteration,
+          elapsedMs,
+          hasReceipt: false,
+          txKnown: null,
+          error: "rpc",
+        });
+        const wait = deadline - Date.now();
+        if (wait <= 0) break;
+        await sleep(Math.min(pollIntervalMs, wait));
+        continue;
+      }
+      const receipt: TransactionReceipt | null = receiptLookup.value;
 
       if (receipt) {
-        options?.onIteration?.({ iteration, elapsedMs, hasReceipt: true, txKnown: null });
+        notifyIteration(options, { iteration, elapsedMs, hasReceipt: true, txKnown: null });
 
         if (receipt.status === "success") {
           return { status: "CONFIRMED", secondsPending: elapsed };
@@ -303,11 +405,23 @@ export async function watchTransaction(
       }
 
       // No receipt yet — check if the tx is still known to the node
-      const tx = await client
-        .getTransaction({ hash: txHash })
-        .catch(() => null);
+      const txLookup = await lookupTransaction(client, txHash);
+      if (!txLookup.reachable) {
+        notifyIteration(options, {
+          iteration,
+          elapsedMs,
+          hasReceipt: false,
+          txKnown: null,
+          error: "rpc",
+        });
+        const wait = deadline - Date.now();
+        if (wait <= 0) break;
+        await sleep(Math.min(pollIntervalMs, wait));
+        continue;
+      }
+      const tx = txLookup.value;
 
-      options?.onIteration?.({
+      notifyIteration(options, {
         iteration,
         elapsedMs,
         hasReceipt: false,
@@ -330,8 +444,8 @@ export async function watchTransaction(
 
       // Tx still pending in the mempool — keep waiting
     } catch {
-      // RPC error mid-poll — do not abort, keep trying
-      options?.onIteration?.({
+      // Unexpected error mid-poll — do not abort, keep trying
+      notifyIteration(options, {
         iteration,
         elapsedMs,
         hasReceipt: false,
@@ -366,34 +480,46 @@ export type TxStatusReport = WatchResult & {
  *
  * watchTransaction blocks for up to 60 seconds, which is fine for a script but
  * not for an HTTP handler. This variant lets a client poll on its own cadence
- * and keep a responsive UI. The caller supplies `submittedAtMs` (when the tx
- * was broadcast) since a stateless request has no other way to know how long
- * the transaction has been outstanding.
+ * and keep a responsive UI.
  *
- * Never throws — RPC failures degrade to NULL_PENDING, because "we could not
- * reach the node" must never be reported to a user as "your transaction was
- * dropped".
+ * `submittedAtMs` (when the tx was broadcast) is required, not optional: a
+ * stateless request has no other way to know how long the transaction has been
+ * outstanding, and defaulting it to now makes elapsed time permanently zero —
+ * which silently renders both DROPPED and STUCK unreachable and reports every
+ * transaction as still propagating forever.
+ *
+ * Never throws — an unreachable node degrades to NULL_PENDING, because "we
+ * could not see the chain" must never be reported to a user as "your
+ * transaction was dropped". That distinction is why the lookups above separate
+ * a not-found answer from a transport failure.
  */
 export async function classifyTx(
   txHash: Hex,
-  submittedAtMs?: number,
+  submittedAtMs: number,
 ): Promise<TxStatusReport> {
   const client = getPublicClient();
-  const startedAt = submittedAtMs ?? Date.now();
-  const elapsedMs = Math.max(0, Date.now() - startedAt);
+  const elapsedMs = Math.max(0, Date.now() - submittedAtMs);
   const secondsPending = Math.floor(elapsedMs / 1000);
 
+  /** Not knowing is never evidence that the transaction is gone. */
+  const unknown = (why: string): TxStatusReport => ({
+    status: "NULL_PENDING",
+    secondsPending,
+    recommendation: why,
+  });
+
   if (!client) {
-    return {
-      status: "STUCK",
-      secondsPending,
-      revertReason: "No RPC URL configured",
-      recommendation: "The backend has no RPC endpoint configured — status cannot be checked.",
-    };
+    return unknown(
+      "The backend has no RPC endpoint configured, so the status could not be checked.",
+    );
   }
 
   try {
-    const receipt = await client.getTransactionReceipt({ hash: txHash }).catch(() => null);
+    const receiptLookup = await lookupReceipt(client, txHash);
+    if (!receiptLookup.reachable) {
+      return unknown("Could not reach the node this poll. Status is unchanged — retry shortly.");
+    }
+    const receipt = receiptLookup.value;
 
     if (receipt) {
       if (receipt.status === "success") {
@@ -414,19 +540,19 @@ export async function classifyTx(
       };
     }
 
-    const tx = await client.getTransaction({ hash: txHash }).catch(() => null);
+    const txLookup = await lookupTransaction(client, txHash);
+    if (!txLookup.reachable) {
+      return unknown("Could not reach the node this poll. Status is unchanged — retry shortly.");
+    }
 
-    if (!tx) {
+    if (!txLookup.value) {
       // Not visible anywhere. Before the grace window this is Monad's async
       // propagation, not an eviction — the single most common way naive
       // polling logic reports a false "dropped".
       if (elapsedMs < NEVER_SEEN_GRACE_MS) {
-        return {
-          status: "NULL_PENDING",
-          secondsPending,
-          recommendation:
-            "The node has not surfaced this transaction yet. This is normal on an async mempool — keep waiting.",
-        };
+        return unknown(
+          "The node has not surfaced this transaction yet. This is normal on an async mempool — keep waiting.",
+        );
       }
       return {
         status: "DROPPED",

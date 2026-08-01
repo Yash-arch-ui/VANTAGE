@@ -407,7 +407,11 @@ export async function getForecast(
       try {
         const callData = callResult.data;
         if (callData && callData.length >= 66) {
-          const decodedOutput = BigInt(callData as `0x${string}`);
+          // First 32-byte word only. Converting the whole blob turned a
+          // (uint256 amount, uint256 fee) return of (100, 2) into ~3.4e40,
+          // which then suppressed the drift check, was persisted into
+          // forecast_json, and was handed to the explainer as fact.
+          const decodedOutput = BigInt(`0x${callData.slice(2, 66)}`);
           simulatedOutput = decodedOutput.toString();
 
           if (quotedOutput !== 0n) {
