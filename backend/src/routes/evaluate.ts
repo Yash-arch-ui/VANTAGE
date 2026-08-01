@@ -19,7 +19,11 @@ const evaluateRequestBodySchema = z.object({
   tx: z.object({
     from: z.string().regex(/^0x[a-fA-F0-9]{40}$/, "from must be a valid hex address"),
     to: z.string().regex(/^0x[a-fA-F0-9]{40}$/, "to must be a valid hex address"),
-    data: z.string().regex(/^0x[a-fA-F0-9]*$/i, "data must be a valid hex string"),
+    // Whole bytes only. Odd-length hex passed this check and then threw deep
+    // inside viem, turning a plain client mistake into a 500.
+    data: z
+      .string()
+      .regex(/^0x([a-fA-F0-9]{2})*$/i, "data must be a hex string of whole bytes"),
     value: z.string().regex(/^\d+$/, "value must be a non-negative integer string"),
     nonce: z.number().int().nonnegative("nonce must be a non-negative integer"),
   }),
@@ -71,16 +75,22 @@ router.post("/evaluate", async (req: Request, res: Response) => {
     }
 
     // 3. Run the full PSG forecast
-    const forecast = await getPSGForecast(tx, quotedOutput);
+    let forecast = await getPSGForecast(tx, quotedOutput);
 
     let finalPolicy: PolicyResult;
 
     // 4. Run the policy decision
     const initialPolicy = decidePolicy(forecast);
 
-    // 5. If the decision is HOLD_AND_RECHECK, let the polling loop resolve it
+    // 5. If the decision is HOLD_AND_RECHECK, let the polling loop resolve it.
+    //    The hold re-forecasts internally, so adopt the forecast its decision
+    //    was actually based on — otherwise a hold that clears returns PROCEED
+    //    next to the stale HIGH-contention evidence that caused the hold, and
+    //    that contradiction is what gets written to the immutable audit row.
     if (initialPolicy.action === "HOLD_AND_RECHECK") {
-      finalPolicy = await holdAndRecheck(tx, quotedOutput);
+      const held = await holdAndRecheck(tx, quotedOutput);
+      finalPolicy = held.policy;
+      if (held.forecast) forecast = held.forecast;
     } else {
       finalPolicy = initialPolicy;
     }

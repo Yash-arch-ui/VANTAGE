@@ -4,8 +4,8 @@
 
 CREATE TABLE IF NOT EXISTS execution_ledger (
   id              TEXT PRIMARY KEY,     -- uuid (crypto.randomUUID)
-  tx_from         TEXT NOT NULL,
-  tx_to           TEXT NOT NULL,
+  tx_from         TEXT NOT NULL COLLATE NOCASE,
+  tx_to           TEXT NOT NULL COLLATE NOCASE,
   tx_data         TEXT,
   tx_value        TEXT,
   forecast_json   TEXT NOT NULL,        -- full PSGForecast serialized
@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS execution_ledger (
 );
 
 CREATE TABLE IF NOT EXISTS contention_thresholds (
-  contract_address   TEXT PRIMARY KEY,
+  contract_address   TEXT PRIMARY KEY COLLATE NOCASE,
   hold_threshold      REAL NOT NULL DEFAULT 0.7,
   sample_count        INTEGER NOT NULL DEFAULT 0,
   last_calibrated     TEXT
@@ -35,7 +35,7 @@ CREATE INDEX IF NOT EXISTS idx_execution_ledger_created_at ON execution_ledger(c
 -- Contracts the watchdog polls. watch_type distinguishes user-added ('manual')
 -- from contracts auto-added after an /api/evaluate call ('auto').
 CREATE TABLE IF NOT EXISTS watchlist (
-  contract_address TEXT PRIMARY KEY,
+  contract_address TEXT PRIMARY KEY COLLATE NOCASE,
   watch_type        TEXT NOT NULL DEFAULT 'manual',   -- 'manual' | 'auto'
   added_at          TEXT NOT NULL,                    -- ISO 8601, server-side
   last_checked      TEXT                              -- ISO 8601 of last successful poll
@@ -45,7 +45,7 @@ CREATE TABLE IF NOT EXISTS watchlist (
 --   reserve_drift | contention_spike | failure_surge | approval_exposure | inactivity
 CREATE TABLE IF NOT EXISTS alerts (
   id                TEXT PRIMARY KEY,
-  contract_address  TEXT NOT NULL,
+  contract_address  TEXT NOT NULL COLLATE NOCASE,
   type              TEXT NOT NULL,
   severity          TEXT NOT NULL,                    -- info | warning | critical
   message           TEXT NOT NULL,

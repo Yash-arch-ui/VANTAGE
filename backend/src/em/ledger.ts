@@ -144,8 +144,8 @@ export function recordEntry(entry: RecordEntryInput): string | null {
     const id = randomUUID();
     db.prepare(INSERT_SQL).run(
       id,
-      entry.txFrom,
-      entry.txTo,
+      norm(entry.txFrom),
+      norm(entry.txTo),
       entry.txData,
       entry.txValue,
       JSON.stringify(entry.forecast),
@@ -193,6 +193,20 @@ export function updateOutcome(
 // ── Queries ────────────────────────────────────────────────────────────
 
 const ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
+
+/**
+ * Canonical storage form for an address: lowercase.
+ *
+ * SQLite compares TEXT byte-wise and ADDRESS_RE deliberately accepts both
+ * cases, so without this a wallet writing the EIP-55 checksummed `0xAbC…` and a
+ * dashboard querying `0xabc…` referred to two different contracts. That silently
+ * broke score lookups, contract-filtered history, calibration, and — worst —
+ * getActiveCriticalAlertCount, so the watchdog's critical-alert bias never
+ * applied to the very contracts it had flagged.
+ *
+ * Applied on every write and every lookup, so the two can never disagree.
+ */
+const norm = (address: string): string => address.toLowerCase();
 
 /**
  * Session-wide aggregates grouped by policy_action and outcome. Never throws:
@@ -255,7 +269,7 @@ export function getEntriesForContract(
       .prepare(
         "SELECT * FROM execution_ledger WHERE tx_to = ? AND created_at >= ? ORDER BY created_at DESC",
       )
-      .all(address, cutoff) as ExecutionLedgerRow[];
+      .all(norm(address), cutoff) as ExecutionLedgerRow[];
   } catch (err) {
     console.error(`[ledger] getEntriesForContract failed for "${address}":`, err);
     return [];
@@ -295,7 +309,7 @@ export function countEvaluations(address: string): number {
     }
     const row = db
       .prepare("SELECT COUNT(*) AS c FROM execution_ledger WHERE tx_to = ?")
-      .get(address) as { c: number };
+      .get(norm(address)) as { c: number };
     return row.c;
   } catch (err) {
     console.error(`[ledger] countEvaluations failed for "${address}":`, err);
@@ -331,7 +345,7 @@ export function getRecentEntries(
         console.error(`[ledger] getRecentEntries: invalid address format "${opts.contract}"`);
         return empty;
       }
-      contract = opts.contract;
+      contract = norm(opts.contract);
     }
 
     const where = contract ? "WHERE tx_to = ?" : "";
@@ -392,7 +406,7 @@ export function getThresholdRow(contractAddress: string): ThresholdRow | null {
       .prepare(
         "SELECT contract_address, hold_threshold, sample_count, last_calibrated FROM contention_thresholds WHERE contract_address = ?",
       )
-      .get(contractAddress);
+      .get(norm(contractAddress));
     return (row as ThresholdRow | undefined) ?? null;
   } catch (err) {
     console.error(`[ledger] getThresholdRow failed for "${contractAddress}":`, err);
@@ -418,7 +432,7 @@ export function upsertThreshold(
          hold_threshold = excluded.hold_threshold,
          sample_count   = excluded.sample_count,
          last_calibrated = excluded.last_calibrated`,
-    ).run(contractAddress, holdThreshold, sampleCount, new Date().toISOString());
+    ).run(norm(contractAddress), holdThreshold, sampleCount, new Date().toISOString());
   } catch (err) {
     console.error(`[ledger] upsertThreshold failed for "${contractAddress}":`, err);
   }
@@ -482,7 +496,7 @@ export function addToWatchlist(address: string, watchType: string): boolean {
       .prepare(
         "INSERT OR IGNORE INTO watchlist (contract_address, watch_type, added_at) VALUES (?, ?, ?)",
       )
-      .run(address, watchType, new Date().toISOString());
+      .run(norm(address), watchType, new Date().toISOString());
     return info.changes > 0;
   } catch (err) {
     console.error(`[ledger] addToWatchlist failed for "${address}":`, err);
@@ -497,11 +511,52 @@ export function removeFromWatchlist(address: string): boolean {
     return false;
   }
   try {
-    const info = db.prepare("DELETE FROM watchlist WHERE contract_address = ?").run(address);
+    // Every sibling watchlist function validates the address; this one did not.
+    if (!ADDRESS_RE.test(address)) {
+      console.error(`[ledger] removeFromWatchlist: invalid address "${address}"`);
+      return false;
+    }
+    const info = db.prepare("DELETE FROM watchlist WHERE contract_address = ?").run(norm(address));
     return info.changes > 0;
   } catch (err) {
     console.error(`[ledger] removeFromWatchlist failed for "${address}":`, err);
     return false;
+  }
+}
+
+/**
+ * Drop the oldest `auto` watchlist entries so the poll loop stays bounded.
+ *
+ * Every evaluated contract is auto-watched, and each watched contract costs
+ * roughly 25-30 RPC round-trips per 15s cycle, so an unbounded list means the
+ * cycle time grows with the number of distinct addresses ever evaluated until
+ * cycles can no longer finish within their interval. Manually watched contracts
+ * are never evicted — a human asked for those.
+ *
+ * Returns the number of entries evicted.
+ */
+export function pruneAutoWatchlist(maxAuto: number): number {
+  if (!db) {
+    console.error("[ledger] pruneAutoWatchlist called before initDatabase — returning 0");
+    return 0;
+  }
+  try {
+    const info = db
+      .prepare(
+        `DELETE FROM watchlist
+         WHERE watch_type = 'auto'
+           AND contract_address NOT IN (
+             SELECT contract_address FROM watchlist
+             WHERE watch_type = 'auto'
+             ORDER BY added_at DESC
+             LIMIT ?
+           )`,
+      )
+      .run(maxAuto);
+    return info.changes;
+  } catch (err) {
+    console.error("[ledger] pruneAutoWatchlist failed:", err);
+    return 0;
   }
 }
 
@@ -532,7 +587,7 @@ export function setLastChecked(address: string, checkedAt: string): void {
   try {
     db.prepare("UPDATE watchlist SET last_checked = ? WHERE contract_address = ?").run(
       checkedAt,
-      address,
+      norm(address),
     );
   } catch (err) {
     console.error(`[ledger] setLastChecked failed for "${address}":`, err);
@@ -552,7 +607,7 @@ export function insertAlert(input: NewAlertInput): string | null {
   try {
     const active = db
       .prepare("SELECT id FROM alerts WHERE contract_address = ? AND type = ? AND dismissed = 0 LIMIT 1")
-      .get(input.contractAddress, input.type);
+      .get(norm(input.contractAddress), input.type);
     if (active !== undefined) return null;
 
     const id = randomUUID();
@@ -561,7 +616,7 @@ export function insertAlert(input: NewAlertInput): string | null {
        VALUES (?, ?, ?, ?, ?, ?, 0, 0, ?)`,
     ).run(
       id,
-      input.contractAddress,
+      norm(input.contractAddress),
       input.type,
       input.severity,
       input.message,
@@ -575,6 +630,59 @@ export function insertAlert(input: NewAlertInput): string | null {
   }
 }
 
+/**
+ * Auto-dismiss the active alert of this (address, type) because the condition
+ * that raised it is no longer present.
+ *
+ * Alerts previously had no way out except a human clicking dismiss. One
+ * transient failure surge therefore biased every future verdict on that
+ * contract from PROCEED to WARN and cost a flat 15 score points forever. An
+ * alert is a statement about the present, so when the watchdog observes the
+ * condition has cleared, it retracts it. Returns the number of alerts resolved.
+ */
+export function resolveAlerts(address: string, type: string): number {
+  if (!db) {
+    console.error("[ledger] resolveAlerts called before initDatabase — returning 0");
+    return 0;
+  }
+  try {
+    const info = db
+      .prepare(
+        "UPDATE alerts SET dismissed = 1 WHERE contract_address = ? AND type = ? AND dismissed = 0",
+      )
+      .run(norm(address), type);
+    return info.changes;
+  } catch (err) {
+    console.error(`[ledger] resolveAlerts failed for ${address} ${type}:`, err);
+    return 0;
+  }
+}
+
+/**
+ * Auto-dismiss alerts that are simply old.
+ *
+ * A condition can stop being observable without the watchdog ever seeing it
+ * clear — the contract is removed from the watchlist, the RPC is down for a
+ * stretch, the process restarts. Without an upper bound those alerts stay
+ * "active" indefinitely and keep degrading the contract's score.
+ */
+export function expireStaleAlerts(maxAgeMs: number): number {
+  if (!db) {
+    console.error("[ledger] expireStaleAlerts called before initDatabase — returning 0");
+    return 0;
+  }
+  try {
+    const cutoff = new Date(Date.now() - maxAgeMs).toISOString();
+    const info = db
+      .prepare("UPDATE alerts SET dismissed = 1 WHERE dismissed = 0 AND created_at < ?")
+      .run(cutoff);
+    return info.changes;
+  } catch (err) {
+    console.error("[ledger] expireStaleAlerts failed:", err);
+    return 0;
+  }
+}
+
 /** True when an undismissed alert of this (address, type) is already present. */
 export function hasActiveAlert(address: string, type: string): boolean {
   if (!db) {
@@ -584,7 +692,7 @@ export function hasActiveAlert(address: string, type: string): boolean {
   try {
     const row = db
       .prepare("SELECT id FROM alerts WHERE contract_address = ? AND type = ? AND dismissed = 0 LIMIT 1")
-      .get(address, type);
+      .get(norm(address), type);
     return row !== undefined;
   } catch (err) {
     console.error(`[ledger] hasActiveAlert failed for ${address} ${type}:`, err);
@@ -603,7 +711,7 @@ export function getActiveCriticalAlertCount(address: string): number {
       .prepare(
         "SELECT COUNT(*) AS c FROM alerts WHERE contract_address = ? AND severity = 'critical' AND dismissed = 0",
       )
-      .get(address) as { c: number };
+      .get(norm(address)) as { c: number };
     return row.c;
   } catch (err) {
     console.error(`[ledger] getActiveCriticalAlertCount failed for "${address}":`, err);
@@ -627,7 +735,7 @@ export function getAlerts(filters: AlertFilters = {}): AlertRow[] {
         return [];
       }
       where.push("contract_address = ?");
-      params.push(filters.address);
+      params.push(norm(filters.address));
     }
     if (filters.severity !== undefined) {
       where.push("severity = ?");
@@ -652,13 +760,22 @@ export function getAlerts(filters: AlertFilters = {}): AlertRow[] {
 }
 
 /** Toggle read / dismissed on one alert. Returns true if a row was updated. */
+/**
+ * Distinguishes the three outcomes a caller must tell apart.
+ *
+ * A single boolean collapsed "no such alert" and "the database refused the
+ * write" into the same value, so a disk-full or SQLITE_BUSY error was reported
+ * to the user as a 404 "no alert with that id".
+ */
+export type UpdateAlertResult = "updated" | "not_found" | "error";
+
 export function updateAlert(
   id: string,
   patch: { read?: boolean; dismissed?: boolean },
-): boolean {
+): UpdateAlertResult {
   if (!db) {
-    console.error("[ledger] updateAlert called before initDatabase — returning false");
-    return false;
+    console.error("[ledger] updateAlert called before initDatabase — returning error");
+    return "error";
   }
   try {
     const sets: string[] = [];
@@ -671,15 +788,15 @@ export function updateAlert(
       sets.push("dismissed = ?");
       params.push(patch.dismissed ? 1 : 0);
     }
-    if (sets.length === 0) return false;
+    if (sets.length === 0) return "not_found";
     params.push(id);
     const info = db
       .prepare(`UPDATE alerts SET ${sets.join(", ")} WHERE id = ?`)
       .run(...params);
-    return info.changes > 0;
+    return info.changes > 0 ? "updated" : "not_found";
   } catch (err) {
     console.error(`[ledger] updateAlert failed for id "${id}":`, err);
-    return false;
+    return "error";
   }
 }
 
@@ -691,7 +808,13 @@ export function getAlertSummary(): AlertSummary {
     return zeros();
   }
   try {
-    const total = (db.prepare("SELECT COUNT(*) AS c FROM alerts").get() as { c: number }).c;
+    // Every field counts active (undismissed) alerts. Previously `total` and
+    // `bySeverity` included dismissed rows while `unread` and `critical` did
+    // not, so one response could report total 10 with critical 0 and
+    // bySeverity.critical 4 — three numbers disagreeing about the same thing.
+    const total = (
+      db.prepare("SELECT COUNT(*) AS c FROM alerts WHERE dismissed = 0").get() as { c: number }
+    ).c;
     const unread = (
       db.prepare("SELECT COUNT(*) AS c FROM alerts WHERE is_read = 0 AND dismissed = 0").get() as { c: number }
     ).c;
@@ -700,7 +823,7 @@ export function getAlertSummary(): AlertSummary {
     ).c;
     const bySeverity: Record<string, number> = {};
     for (const row of db
-      .prepare("SELECT severity AS k, COUNT(*) AS c FROM alerts GROUP BY severity")
+      .prepare("SELECT severity AS k, COUNT(*) AS c FROM alerts WHERE dismissed = 0 GROUP BY severity")
       .all() as { k: string; c: number }[]) {
       bySeverity[row.k] = row.c;
     }

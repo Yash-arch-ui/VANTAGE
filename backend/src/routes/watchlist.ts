@@ -93,6 +93,16 @@ router.delete("/watchlist/:address", (req: Request, res: Response) => {
       return;
     }
     const removed = removeFromWatchlist(address);
+    if (!removed) {
+      // Mirrors POST, which 409s rather than silently pretending a no-op
+      // succeeded: deleting something that was never watched is a client
+      // mistake worth surfacing, not a success.
+      res.status(404).json({
+        error: "NotFound",
+        message: `"${address}" is not on the watchlist.`,
+      });
+      return;
+    }
     res.json({ ok: true, address, removed });
   } catch (err) {
     console.error("DELETE /watchlist — unexpected error:", err);
@@ -154,14 +164,20 @@ router.patch("/alerts/:id", (req: Request, res: Response) => {
       return;
     }
     const { read, dismissed } = parsed.data;
-    const updated = updateAlert(req.params.id, {
-      read,
-      dismissed,
-    });
-    if (!updated) {
+    const result = updateAlert(req.params.id, { read, dismissed });
+
+    if (result === "not_found") {
       res.status(404).json({
         error: "NotFound",
         message: `No alert with id "${req.params.id}"`,
+      });
+      return;
+    }
+    // A write the database refused is our failure, not a missing alert.
+    if (result === "error") {
+      res.status(500).json({
+        error: "InternalServerError",
+        message: "The alert could not be updated.",
       });
       return;
     }

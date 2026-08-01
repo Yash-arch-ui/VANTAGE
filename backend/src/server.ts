@@ -1,4 +1,4 @@
-import express from "express";
+import express, { type NextFunction, type Request, type Response } from "express";
 import type { Server } from "node:http";
 import cors from "cors";
 import dotenv from "dotenv";
@@ -65,6 +65,41 @@ app.use("/api", watchlistRouter);
 app.use("/api", scoreRouter);
 app.use("/api", ledgerRouter);
 app.use("/api", watchRouter);
+
+// Unknown /api path. Express's default is an HTML "Cannot GET /api/foo", which
+// a JSON client parses as garbage rather than surfacing a useful message.
+app.use("/api", (_req, res) => {
+  res.status(404).json({
+    error: "NotFound",
+    message: "No such endpoint.",
+  });
+});
+
+// Terminal error handler.
+//
+// Every route body has its own try/catch, so this exists for the errors raised
+// *before* a handler runs — chiefly express.json() rejecting a malformed body.
+// Without it express replies with HTML (and a stack trace outside production),
+// and the frontend's res.json() throws a parse error instead of reporting what
+// went wrong. The four-argument signature is what marks this as error
+// middleware to express; `next` is unused but must stay.
+app.use((err: Error & { status?: number; type?: string }, _req: Request, res: Response, _next: NextFunction) => {
+  // Body-parser tags its own failures, which are client errors, not ours.
+  if (err.type === "entity.parse.failed" || err.status === 400) {
+    res.status(400).json({
+      error: "ValidationError",
+      message: "Request body is not valid JSON.",
+      details: [],
+    });
+    return;
+  }
+
+  console.error("Unhandled error:", err);
+  res.status(err.status ?? 500).json({
+    error: "InternalServerError",
+    message: "An unexpected error occurred while processing the request.",
+  });
+});
 
 export { app };
 

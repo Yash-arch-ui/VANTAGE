@@ -128,7 +128,7 @@ async function main() {
   // ── 4. holdAndRecheck — should visibly poll over multiple seconds ─────
   console.log(`\nholdAndRecheck() — interval 2s, timeout 14s ...`);
   const t0 = Date.now();
-  const result = await holdAndRecheck(tx, undefined, { intervalMs: 2_000, timeoutMs: 14_000 });
+  const { policy: result } = await holdAndRecheck(tx, undefined, { intervalMs: 2_000, timeoutMs: 14_000 });
   const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
   console.log(`holdAndRecheck resolved in ${elapsed}s`);
   console.log(`final action = ${result.action}`);
