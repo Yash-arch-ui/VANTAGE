@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ExternalLink } from "lucide-react";
 import { AppShell } from "../components/app-shell";
 import { useLedger, useStats } from "../hooks/api";
@@ -28,6 +28,15 @@ function LedgerPage() {
 
   const total = data?.total ?? 0;
   const hasMore = offset + PAGE_SIZE < total;
+
+  // If rows disappear beneath the current page (a refetch, a shrinking total),
+  // walk back rather than stranding the user on a bare table header with the
+  // Previous button hidden and no empty state shown.
+  useEffect(() => {
+    if (!isLoading && offset > 0 && offset >= total) {
+      setOffset(Math.max(0, Math.floor(Math.max(0, total - 1) / PAGE_SIZE) * PAGE_SIZE));
+    }
+  }, [isLoading, offset, total]);
 
   return (
     <AppShell>
@@ -175,7 +184,7 @@ function LedgerPage() {
         </div>
       )}
 
-      {total > PAGE_SIZE && (
+      {(offset > 0 || hasMore) && (
         <div className="mt-6 flex items-center gap-3">
           <button
             onClick={() => setOffset((o) => Math.max(0, o - PAGE_SIZE))}

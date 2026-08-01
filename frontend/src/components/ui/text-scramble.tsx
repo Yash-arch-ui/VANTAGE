@@ -1,5 +1,5 @@
 "use client";
-import { type JSX, useEffect, useState } from "react";
+import { type JSX, useEffect, useRef, useState } from "react";
 import { motion, MotionProps } from "motion/react";
 
 type TextScrambleProps = {
@@ -31,8 +31,18 @@ export function TextScramble({
   const [isAnimating, setIsAnimating] = useState(false);
   const text = children;
 
-  const scramble = async () => {
-    if (isAnimating) return;
+  /**
+   * Held so the effect can stop the animation on unmount. Without it the
+   * interval outlived the component, kept calling setState, and eventually
+   * fired onScrambleComplete — which in the preloader's case resolved a screen
+   * that was already gone. Under StrictMode the effect runs twice and both
+   * calls read the same `isAnimating` from that render, so the guard alone did
+   * not prevent a second interval either.
+   */
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const scramble = () => {
+    if (intervalRef.current !== null) return;
     setIsAnimating(true);
 
     const steps = duration / speed;
@@ -65,17 +75,27 @@ export function TextScramble({
 
       if (step > steps) {
         clearInterval(interval);
+        intervalRef.current = null;
         setDisplayText(text);
         setIsAnimating(false);
         onScrambleComplete?.();
       }
     }, speed * 1000);
+
+    intervalRef.current = interval;
   };
 
   useEffect(() => {
     if (!trigger) return;
 
     scramble();
+    return () => {
+      if (intervalRef.current !== null) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [trigger]);
 
   return (

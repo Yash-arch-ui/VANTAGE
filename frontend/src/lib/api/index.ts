@@ -69,14 +69,14 @@ export async function getLedger(
 }
 
 /**
- * One-shot transaction status. `submittedAt` is the broadcast time in epoch ms —
- * without it the backend cannot tell a 2-second-old transaction from a
- * 2-minute-old one, which is the whole difference between "propagating" and
- * "stuck".
+ * One-shot transaction status. `submittedAt` is the broadcast time in epoch ms
+ * and is required by the server — without it the backend cannot tell a
+ * 2-second-old transaction from a 2-minute-old one, which is the whole
+ * difference between "propagating" and "stuck".
  */
 export function getTxStatus(
   txHash: string,
-  submittedAt?: number,
+  submittedAt: number,
   signal?: AbortSignal,
 ): Promise<TxStatusReport> {
   return apiFetch(`/api/watch/${txHash}${qs({ since: submittedAt })}`, { signal });

@@ -9,13 +9,32 @@ import { VerdictPanel } from "../components/guard/verdict-panel";
 import { WatcherStrip } from "../components/guard/watcher-strip";
 import { PRESETS, useTxBuilder, type BuiltTx, type Preset } from "../hooks/useTxBuilder";
 import { useEvaluate, useReportOutcome, useTxStatus } from "../hooks/api";
-import { ApiError, type EvaluateResponse, type TxOutcome, type UserAction } from "../lib/api";
+import {
+  ApiError,
+  type EvaluateResponse,
+  type TxOutcome,
+  type TxWatchStatus,
+  type UserAction,
+} from "../lib/api";
 import { shortAddress } from "../lib/format";
 import { actionTone, toneClasses } from "../lib/risk";
 
 export const Route = createFileRoute("/app")({
   component: GuardConsole,
 });
+
+/**
+ * Watcher statuses that end the story, mapped to the outcome recorded against
+ * the ledger entry. STUCK is terminal too: the transaction has sat well past
+ * its expected inclusion time, and leaving it out meant the watcher polled
+ * forever and the outcome was never recorded at all.
+ */
+const TERMINAL_OUTCOME: Partial<Record<TxWatchStatus, TxOutcome>> = {
+  CONFIRMED: "CONFIRMED",
+  FAILED: "FAILED",
+  DROPPED: "DROPPED",
+  STUCK: "STUCK",
+};
 
 function GuardConsole() {
   const { isConnected } = useAccount();
@@ -29,6 +48,14 @@ function GuardConsole() {
   const [txHash, setTxHash] = useState<Hex | null>(null);
   const [submittedAt, setSubmittedAt] = useState<number | null>(null);
   const [outcomeReported, setOutcomeReported] = useState(false);
+  /**
+   * What the user actually chose. The terminal-status report used to hardcode
+   * "SIGNED", and the backend's COALESCE takes any non-null value, so an
+   * OVERRIDDEN record was clobbered seconds after it was written — leaving
+   * every "overridden" counter permanently at zero for exactly the overrides
+   * that went on to confirm.
+   */
+  const [userAction, setUserAction] = useState<UserAction | null>(null);
 
   const { build, isBuilding } = useTxBuilder();
   const evaluateMutation = useEvaluate();
@@ -44,15 +71,43 @@ function GuardConsole() {
     setTxHash(null);
     setSubmittedAt(null);
     setOutcomeReported(false);
+    setUserAction(null);
   };
 
+  /**
+   * A transaction is in flight until the watcher reaches a terminal state.
+   * Starting a new evaluation before then used to clear txHash, which
+   * permanently short-circuited the reporting effect — so that transaction's
+   * outcome was never recorded and the ledger quietly lost a row it advertises
+   * as "what actually happened".
+   */
+  const isAwaitingOutcome = txHash !== null && !outcomeReported;
+
   const selectPreset = (p: Preset) => {
+    if (isAwaitingOutcome) {
+      toast.error("Wait for the current transaction to settle first.");
+      return;
+    }
     setPreset(p);
     setInput(p.defaultInput);
     reset();
   };
 
+  /**
+   * Editing the amount invalidates the verdict on screen. Without this the user
+   * could read "PROCEED" for 1 token, type 500, and sign — signing the 1-token
+   * transaction the verdict actually described while the field said 500.
+   */
+  const handleInputChange = (value: string) => {
+    setInput(value);
+    if (result && !isAwaitingOutcome) reset();
+  };
+
   const handleEvaluate = async () => {
+    if (isAwaitingOutcome) {
+      toast.error("Wait for the current transaction to settle before evaluating another.");
+      return;
+    }
     reset();
     try {
       const next = await build(preset, input);
@@ -67,25 +122,42 @@ function GuardConsole() {
   };
 
   /** Report what the user chose. Outcome is attached later, once the tx settles. */
-  const report = (userAction: UserAction, outcome?: TxOutcome, hash?: string) => {
+  const report = (action: UserAction, outcome?: TxOutcome, hash?: string) => {
     if (!result?.entryId) return;
-    reportOutcome.mutate({ entryId: result.entryId, userAction, outcome, txHash: hash });
+    reportOutcome.mutate(
+      { entryId: result.entryId, userAction: action, outcome, txHash: hash },
+      {
+        onError: (err) =>
+          toast.error(
+            err instanceof Error
+              ? `Could not record the outcome: ${err.message}`
+              : "Could not record the outcome.",
+          ),
+      },
+    );
   };
 
   const handleSign = async (isOverride: boolean) => {
     if (!result || !built) return;
+    const action: UserAction = isOverride ? "OVERRIDDEN" : "SIGNED";
     try {
       // Sign exactly what was evaluated.
       const hash = await sendTransactionAsync({
         to: built.request.tx.to as Hex,
         data: built.request.tx.data as Hex,
         value: BigInt(built.request.tx.value),
+        // The wallet would otherwise pick its own nonce from the pending count,
+        // while the guard evaluated the one in `built` — so with an earlier
+        // transaction still pending, the verdict would describe a different
+        // nonce than the one signed.
+        nonce: built.request.tx.nonce,
       });
       setTxHash(hash);
       setSubmittedAt(Date.now());
+      setUserAction(action);
       // Record the decision immediately — an override is the interesting signal
       // and must be captured whether or not the transaction later confirms.
-      report(isOverride ? "OVERRIDDEN" : "SIGNED", undefined, hash);
+      report(action, undefined, hash);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Wallet rejected the transaction.");
     }
@@ -101,17 +173,34 @@ function GuardConsole() {
   // same ledger entry — that is what recalibrates the contract's threshold.
   useEffect(() => {
     if (!watchStatus || !txHash || outcomeReported || !result?.entryId) return;
-    const terminal: Record<string, TxOutcome | undefined> = {
-      CONFIRMED: "CONFIRMED",
-      FAILED: "FAILED",
-      DROPPED: "DROPPED",
-    };
-    const outcome = terminal[watchStatus.status];
+    const outcome = TERMINAL_OUTCOME[watchStatus.status];
     if (!outcome) return;
 
-    reportOutcome.mutate({ entryId: result.entryId, userAction: "SIGNED", outcome, txHash });
+    reportOutcome.mutate(
+      {
+        entryId: result.entryId,
+        // The user's real choice, not a hardcoded "SIGNED". The backend
+        // COALESCEs any non-null value over what is already stored, so sending
+        // "SIGNED" here erased the OVERRIDDEN record written moments earlier.
+        userAction: userAction ?? "SIGNED",
+        outcome,
+        txHash,
+      },
+      {
+        onError: (err) =>
+          toast.error(
+            err instanceof Error
+              ? `Could not record the outcome: ${err.message}`
+              : "Could not record the outcome.",
+          ),
+      },
+    );
     setOutcomeReported(true);
-  }, [watchStatus, txHash, outcomeReported, result?.entryId, reportOutcome]);
+    // Depends on reportOutcome.mutate, which is stable, rather than the
+    // mutation object — that is a fresh reference on every render and would
+    // re-run this effect every time.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [watchStatus, txHash, outcomeReported, result?.entryId, userAction, reportOutcome.mutate]);
 
   const isAbort = result?.policy.action === "ABORT";
   const busy = isBuilding || evaluateMutation.isPending;
@@ -164,7 +253,7 @@ function GuardConsole() {
               <input
                 id="tx-input"
                 value={input}
-                onChange={(e) => setInput(e.target.value)}
+                onChange={(e) => handleInputChange(e.target.value)}
                 inputMode="decimal"
                 className="tabular mt-2 w-full rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-sm outline-none focus:border-white/25"
               />
