@@ -18,9 +18,21 @@ export function formatToken(
 ): string {
   if (value === null || value === undefined) return "—";
   try {
-    const n = Number(formatUnits(BigInt(value), decimals));
+    const wei = BigInt(value);
+    const magnitude = wei < 0n ? -wei : wei;
+    // Display threshold in exact integer wei (10^-precision tokens). A real
+    // amount below it would round to all zeros at `precision` decimals and read
+    // as "0", so render "<0.0001" instead. Integer math only — the double
+    // `10 ** -precision` renders as 0.00009999999999999999, and Number-based
+    // division loses tiny values.
+    const thresholdWei = 10n ** BigInt(Math.max(0, decimals - precision));
+    if (magnitude !== 0n && magnitude < thresholdWei) {
+      // Same literal for every sub-threshold amount: "0." + (precision-1)
+      // zeros + "1", built from the string, never from a floating division.
+      return precision <= 0 ? "<1" : `<0.${"0".repeat(precision - 1)}1`;
+    }
+    const n = Number(formatUnits(wei, decimals));
     if (!Number.isFinite(n)) return "—";
-    if (n !== 0 && Math.abs(n) < 10 ** -precision) return `<${10 ** -precision}`;
     return n.toLocaleString(undefined, { maximumFractionDigits: precision });
   } catch {
     return "—";
