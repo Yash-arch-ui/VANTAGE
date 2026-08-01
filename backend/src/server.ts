@@ -35,11 +35,15 @@ import outcomeRouter from "./routes/outcome.js";
 import statsRouter from "./routes/stats.js";
 import watchlistRouter from "./routes/watchlist.js";
 import scoreRouter from "./routes/score.js";
+import ledgerRouter from "./routes/ledger.js";
+import watchRouter from "./routes/watch.js";
 app.use("/api", evaluateRouter);
 app.use("/api", outcomeRouter);
 app.use("/api", statsRouter);
 app.use("/api", watchlistRouter);
 app.use("/api", scoreRouter);
+app.use("/api", ledgerRouter);
+app.use("/api", watchRouter);
 
 export { app };
 
