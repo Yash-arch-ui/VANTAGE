@@ -1,9 +1,20 @@
 node_modules/
 dist/
 .env
+.env.*
+!.env.example
 *.db
+*.db-shm
+*.db-wal
 .DS_Store
 out/
 cache/
 broadcast/
 target/
+
+# frontend build artifacts
+.output/
+.nitro/
+.vercel/
+.tanstack/
+frontend/dist/
