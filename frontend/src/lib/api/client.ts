@@ -76,38 +76,68 @@ export type ApiFetchOptions = RequestInit & { timeoutMs?: number };
  * Typed fetch against the Vantage backend. Throws ApiError on any non-2xx,
  * timeout, or transport failure — callers never inspect a Response.
  */
+/**
+ * Compose a deadline with any caller-supplied signal (e.g. React Query
+ * cancelling a superseded query) so whichever fires first wins.
+ *
+ * AbortSignal.any only reached Safari in 17.4, and calling it unguarded threw a
+ * raw TypeError that never became an ApiError — so on Safari 17.0-17.3 every
+ * read failed with pages showing empty states instead of "could not reach the
+ * backend". The manual bridge below covers those.
+ */
+function composeSignals(
+  timeoutSignal: AbortSignal,
+  signal: AbortSignal | null | undefined,
+): AbortSignal {
+  if (!signal) return timeoutSignal;
+  if (typeof AbortSignal.any === "function") return AbortSignal.any([signal, timeoutSignal]);
+
+  const controller = new AbortController();
+  const abort = (reason: unknown) => controller.abort(reason);
+  for (const s of [signal, timeoutSignal]) {
+    if (s.aborted) {
+      abort(s.reason);
+      break;
+    }
+    s.addEventListener("abort", () => abort(s.reason), { once: true });
+  }
+  return controller.signal;
+}
+
 export async function apiFetch<T>(path: string, options: ApiFetchOptions = {}): Promise<T> {
   const { timeoutMs = DEFAULT_TIMEOUT_MS, signal, ...init } = options;
 
-  // Compose our deadline with any caller-supplied signal (e.g. React Query
-  // cancelling a superseded query) so whichever fires first wins.
-  const timeoutSignal = AbortSignal.timeout(timeoutMs);
-  const composed = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
-
   let response: Response;
+  let raw: string;
   try {
+    const timeoutSignal = AbortSignal.timeout(timeoutMs);
     response = await fetch(`${BASE_URL}${path}`, {
       ...init,
-      signal: composed,
+      signal: composeSignals(timeoutSignal, signal),
       headers: {
         ...(init.body !== undefined ? { "content-type": "application/json" } : {}),
         ...init.headers,
       },
     });
+    // Reading the body is inside the try as well: the deadline can elapse after
+    // the headers arrive but before the body finishes, and that used to escape
+    // as a raw AbortError instead of a Timeout — most likely on /api/evaluate,
+    // which has the longest budget and the largest response.
+    raw = await response.text();
   } catch (err) {
-    if (timeoutSignal.aborted) {
+    // A caller-initiated abort is not an error condition — let it propagate so
+    // React Query can distinguish cancellation from failure. Checked before the
+    // timeout so an explicit cancellation is never mislabelled.
+    if (signal?.aborted) throw err;
+    if (isAbortLike(err)) {
       throw new ApiError("Timeout", `Request to ${path} timed out after ${timeoutMs}ms.`);
     }
-    // A caller-initiated abort is not an error condition — let it propagate so
-    // React Query can distinguish cancellation from failure.
-    if (signal?.aborted) throw err;
     throw new ApiError(
       "Network",
       `Could not reach the Vantage backend at ${BASE_URL}. Is it running?`,
     );
   }
 
-  const raw = await response.text();
   const body: unknown = raw ? safeParse(raw) : null;
 
   if (!response.ok) {
@@ -120,6 +150,11 @@ export async function apiFetch<T>(path: string, options: ApiFetchOptions = {}): 
   }
 
   return body as T;
+}
+
+/** Timeouts surface as TimeoutError or AbortError depending on the engine. */
+function isAbortLike(err: unknown): boolean {
+  return err instanceof DOMException && (err.name === "TimeoutError" || err.name === "AbortError");
 }
 
 function safeParse(raw: string): unknown {

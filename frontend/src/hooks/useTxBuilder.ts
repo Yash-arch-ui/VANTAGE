@@ -51,6 +51,10 @@ export const PRESETS: Preset[] = [
   },
 ];
 
+/** Digits with at most one decimal point — no commas, no exponents. */
+const DECIMAL_RE = /^\d+(\.\d+)?$/;
+const INTEGER_RE = /^\d+$/;
+
 export type BuiltTx = {
   request: EvaluateRequest;
   /** Human-readable summary of what is about to be evaluated. */
@@ -82,7 +86,12 @@ export function useTxBuilder() {
         // The nonce has to come from the chain, not a counter: a stale nonce is
         // one of the conditions the guard is meant to catch, so feeding it a
         // guess would test nothing.
-        const nonce = await publicClient.getTransactionCount({ address });
+        //
+        // "pending" rather than the default "latest": the wallet will pick the
+        // pending count when it signs, so evaluating the confirmed count would
+        // describe a different transaction than the one the user ends up
+        // signing whenever anything of theirs is already in flight.
+        const nonce = await publicClient.getTransactionCount({ address, blockTag: "pending" });
 
         let data: Hex;
         let quotedOutput: string | undefined;
@@ -90,7 +99,13 @@ export function useTxBuilder() {
 
         switch (preset.id) {
           case "swap": {
-            const inputAmount = parseEther(rawInput || "0");
+            // Validate before parsing. parseEther throws viem's own
+            // "Cannot convert 1,5 to a BigInt", which went straight to a toast —
+            // a decimal comma is a reasonable thing for someone to type.
+            if (!DECIMAL_RE.test(rawInput.trim())) {
+              throw new Error("Enter an amount using digits and a single decimal point.");
+            }
+            const inputAmount = parseEther(rawInput.trim());
             if (inputAmount <= 0n) throw new Error("Enter an amount greater than zero.");
 
             // Live quote from the pool — this is the number the user is
@@ -116,7 +131,12 @@ export function useTxBuilder() {
           }
 
           case "claim": {
-            const slotId = BigInt(rawInput || "0");
+            // BigInt("1.5") and BigInt("2e3") both throw; a slot is a whole
+            // number, so say so rather than surfacing a JS error message.
+            if (!INTEGER_RE.test(rawInput.trim())) {
+              throw new Error("Slot id must be a whole number.");
+            }
+            const slotId = BigInt(rawInput.trim());
             data = encodeFunctionData({
               abi: mockClaimAbi,
               functionName: "claim",

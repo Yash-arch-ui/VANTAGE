@@ -34,7 +34,11 @@ export const queryKeys = {
   watchlist: ["watchlist"] as const,
   alerts: (query: AlertQuery) => ["alerts", query] as const,
   alertSummary: ["alerts", "summary"] as const,
-  txStatus: (txHash: string) => ["tx-status", txHash] as const,
+  // submittedAt belongs in the key: the server uses it to distinguish
+  // propagating from stuck, so two consumers of the same hash with different
+  // values must not share one cache entry.
+  txStatus: (txHash: string | undefined, submittedAt: number | undefined) =>
+    ["tx-status", txHash, submittedAt] as const,
 };
 
 // ── Reads ──────────────────────────────────────────────────────────────
@@ -70,6 +74,7 @@ export function useWatchlist() {
   return useQuery<WatchlistItem[]>({
     queryKey: queryKeys.watchlist,
     queryFn: ({ signal }) => api.getWatchlist(signal),
+    placeholderData: (prev) => prev,
   });
 }
 
@@ -78,6 +83,10 @@ export function useAlerts(query: AlertQuery = {}) {
     queryKey: queryKeys.alerts(query),
     queryFn: ({ signal }) => api.getAlerts(query, signal),
     refetchInterval: ALERT_POLL_MS,
+    // Changing a filter changes the key, which left `data` undefined — the list
+    // rendered nothing AND the empty state was suppressed, so the panel went
+    // blank for the length of the request.
+    placeholderData: (prev) => prev,
   });
 }
 
@@ -97,18 +106,27 @@ export function useAlertSummary() {
  */
 export function useTxStatus(txHash: string | undefined, submittedAt: number | undefined) {
   return useQuery<TxStatusReport>({
-    queryKey: queryKeys.txStatus(txHash ?? ""),
-    queryFn: ({ signal }) => api.getTxStatus(txHash!, submittedAt, signal),
-    enabled: Boolean(txHash),
+    queryKey: queryKeys.txStatus(txHash, submittedAt),
+    // The server requires submittedAt, so don't fire without it.
+    queryFn: ({ signal }) => api.getTxStatus(txHash!, submittedAt!, signal),
+    enabled: Boolean(txHash) && submittedAt !== undefined,
     refetchInterval: (query) => {
       const status = query.state.data?.status;
-      // CONFIRMED, FAILED and DROPPED are terminal; STUCK and NULL_PENDING can
-      // still resolve, so keep polling those.
-      if (status === "CONFIRMED" || status === "FAILED" || status === "DROPPED") return false;
-      return TX_POLL_MS;
+      if (!status) return TX_POLL_MS;
+      // STUCK counts as terminal. It used to be treated as "keep waiting",
+      // so a stuck transaction polled every 2s for as long as the tab stayed
+      // open and its outcome was never recorded at all.
+      return TERMINAL_STATUSES.has(status) ? false : TX_POLL_MS;
     },
   });
 }
+
+const TERMINAL_STATUSES: ReadonlySet<TxStatusReport["status"]> = new Set([
+  "CONFIRMED",
+  "FAILED",
+  "DROPPED",
+  "STUCK",
+]);
 
 // ── Writes ─────────────────────────────────────────────────────────────
 

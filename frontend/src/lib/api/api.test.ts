@@ -162,3 +162,57 @@ describe("qs", () => {
     expect(qs({ a: undefined })).toBe("");
   });
 });
+
+describe("apiFetch — abort handling", () => {
+  it("classifies a timeout during the body read, not just the headers", async () => {
+    // Headers arrive, then the deadline elapses mid-body. This used to escape
+    // as a raw AbortError because response.text() sat outside the try.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        text: async () => {
+          throw new DOMException("The operation timed out.", "TimeoutError");
+        },
+      })),
+    );
+    const err = (await apiFetch("/api/evaluate").catch((e: unknown) => e)) as ApiError;
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err.kind).toBe("Timeout");
+  });
+
+  it("works when AbortSignal.any is unavailable (Safari < 17.4)", async () => {
+    const original = AbortSignal.any;
+    // @ts-expect-error deliberately removing the API to emulate older Safari
+    delete AbortSignal.any;
+    try {
+      stubFetch(200, { status: "ok" });
+      const controller = new AbortController();
+      // Before the fallback this threw a raw TypeError before the try block,
+      // so it never became an ApiError and pages showed empty states instead
+      // of a connection error.
+      await expect(apiFetch("/health", { signal: controller.signal })).resolves.toEqual({
+        status: "ok",
+      });
+    } finally {
+      AbortSignal.any = original;
+    }
+  });
+
+  it("lets a caller-initiated cancellation propagate unchanged", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new DOMException("Aborted", "AbortError");
+      }),
+    );
+    const err = await apiFetch("/api/stats", { signal: controller.signal }).catch(
+      (e: unknown) => e,
+    );
+    // React Query needs to tell cancellation apart from failure.
+    expect(err).not.toBeInstanceOf(ApiError);
+  });
+});
