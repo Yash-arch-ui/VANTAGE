@@ -1,12 +1,22 @@
 import { Link } from "@tanstack/react-router";
 import type { ReactNode } from "react";
 import { WalletButton } from "./wallet-button";
+import { useAlertSummary } from "../hooks/api";
 
-// Monitor, Score and Ledger join this once their routes land.
-const NAV = [{ to: "/app", label: "Guard" }] as const;
+const NAV = [
+  { to: "/app", label: "Guard" },
+  { to: "/monitor", label: "Monitor" },
+  { to: "/score", label: "Score" },
+  { to: "/ledger", label: "Ledger" },
+] as const;
 
 /** Chrome shared by every authenticated page: nav, alert badge, wallet. */
 export function AppShell({ children }: { children: ReactNode }) {
+  // Open critical alerts are the one thing worth interrupting any page for —
+  // they also bias the guard's verdicts, so the count belongs in the chrome.
+  const { data: summary } = useAlertSummary();
+  const criticalCount = summary?.critical ?? 0;
+
   return (
     <div className="min-h-screen">
       <div className="noise-overlay" />
@@ -25,6 +35,9 @@ export function AppShell({ children }: { children: ReactNode }) {
                 activeProps={{ className: "!text-white bg-white/[0.06]" }}
               >
                 {item.label}
+                {item.to === "/monitor" && criticalCount > 0 && (
+                  <span className="ml-1.5 text-[color:var(--danger)]">{criticalCount}</span>
+                )}
               </Link>
             ))}
           </nav>
