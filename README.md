@@ -44,6 +44,8 @@ frontend/    TanStack Start + React + Tailwind. The UI.
 | `POST /api/evaluate` | The core call: simulate → decide → explain → record. Can block up to ~30s when the policy holds and re-checks. |
 | `POST /api/outcome` | Report what actually happened; recalibrates the contention threshold |
 | `GET /api/stats` | Session aggregates |
+| `GET /api/ledger` | Recent decisions, newest first (`limit`, `offset`, `contract`) |
+| `GET /api/watch/:txHash` | One-shot tx status: CONFIRMED / FAILED / NULL_PENDING / STUCK / DROPPED |
 | `GET /api/score/:address` | Vantage Score for a contract |
 | `GET/POST/DELETE /api/watchlist` | Contracts the watchdog monitors |
 | `GET/PATCH /api/alerts`, `GET /api/alerts/summary` | Watchdog alerts |

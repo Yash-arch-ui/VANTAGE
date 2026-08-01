@@ -220,6 +220,40 @@ export type WatchTransactionOptions = {
 const NEVER_SEEN_GRACE_MS = 10_000;
 
 /**
+ * Re-run a reverted transaction as an eth_call pinned to the exact block it
+ * failed in, so state changes that happened *after* cannot alter or mask the
+ * real revert reason. Returns undefined when nothing could be extracted.
+ */
+async function extractRevertReason(
+  client: NonNullable<ReturnType<typeof getPublicClient>>,
+  txHash: Hex,
+  receipt: TransactionReceipt,
+): Promise<string | undefined> {
+  try {
+    const failedTx = await client.getTransaction({ hash: txHash }).catch(() => null);
+    if (!failedTx || receipt.blockNumber === null) return undefined;
+
+    try {
+      // `account` (not `from`) sets the eth_call sender — viem drops `from`
+      // from the request, which would re-run the call as address(0) and mask
+      // the real revert reason.
+      await client.call({
+        account: failedTx.from,
+        to: failedTx.to,
+        data: failedTx.input,
+        value: failedTx.value,
+        blockNumber: receipt.blockNumber,
+      } as Parameters<typeof client.call>[0]);
+    } catch (callErr: unknown) {
+      return decodeRevertReason(callErr);
+    }
+  } catch {
+    // No additional info available
+  }
+  return undefined;
+}
+
+/**
  * Watch a submitted transaction until it confirms, fails, disappears, or
  * times out.  Polls every 2 seconds up to 60 seconds total.
  *
@@ -263,34 +297,7 @@ export async function watchTransaction(
         }
 
         // status === 'reverted' — try to extract the revert reason
-        let revertReason: string | undefined;
-        try {
-          const failedTx = await client
-            .getTransaction({ hash: txHash })
-            .catch(() => null);
-
-          if (failedTx && receipt.blockNumber !== null) {
-            // Re-execute as eth_call pinned to the exact block the tx
-            // failed in, so state changes that happened *after* do not
-            // alter or mask the real revert reason.
-            try {
-              // `account` (not `from`) sets the eth_call sender — viem drops
-              // `from` from the request, which would re-run the call as
-              // address(0) and mask the real revert reason.
-              await client.call({
-                account: failedTx.from,
-                to: failedTx.to,
-                data: failedTx.input,
-                value: failedTx.value,
-                blockNumber: receipt.blockNumber,
-              } as Parameters<typeof client.call>[0]);
-            } catch (callErr: unknown) {
-              revertReason = decodeRevertReason(callErr);
-            }
-          }
-        } catch {
-          // No additional info available
-        }
+        const revertReason = await extractRevertReason(client, txHash, receipt);
 
         return { status: "FAILED", secondsPending: elapsed, revertReason };
       }
@@ -340,6 +347,116 @@ export async function watchTransaction(
 
   const secondsPending = Math.floor((Date.now() - startedAt) / 1000);
   return { status: "STUCK", secondsPending };
+}
+
+/**
+ * A transaction that has been pending this long without mining is no longer
+ * "just async" — it is stuck (nonce gap, underpriced, or the node is wedged).
+ */
+const STUCK_AFTER_MS = 45_000;
+
+export type TxStatusReport = WatchResult & {
+  /** What the user should actually do about this status. */
+  recommendation: string;
+};
+
+/**
+ * Single-shot version of {@link watchTransaction}: classifies a transaction
+ * from ONE round of RPC calls and returns immediately.
+ *
+ * watchTransaction blocks for up to 60 seconds, which is fine for a script but
+ * not for an HTTP handler. This variant lets a client poll on its own cadence
+ * and keep a responsive UI. The caller supplies `submittedAtMs` (when the tx
+ * was broadcast) since a stateless request has no other way to know how long
+ * the transaction has been outstanding.
+ *
+ * Never throws — RPC failures degrade to NULL_PENDING, because "we could not
+ * reach the node" must never be reported to a user as "your transaction was
+ * dropped".
+ */
+export async function classifyTx(
+  txHash: Hex,
+  submittedAtMs?: number,
+): Promise<TxStatusReport> {
+  const client = getPublicClient();
+  const startedAt = submittedAtMs ?? Date.now();
+  const elapsedMs = Math.max(0, Date.now() - startedAt);
+  const secondsPending = Math.floor(elapsedMs / 1000);
+
+  if (!client) {
+    return {
+      status: "STUCK",
+      secondsPending,
+      revertReason: "No RPC URL configured",
+      recommendation: "The backend has no RPC endpoint configured — status cannot be checked.",
+    };
+  }
+
+  try {
+    const receipt = await client.getTransactionReceipt({ hash: txHash }).catch(() => null);
+
+    if (receipt) {
+      if (receipt.status === "success") {
+        return {
+          status: "CONFIRMED",
+          secondsPending,
+          recommendation: "Transaction confirmed on-chain. Nothing further to do.",
+        };
+      }
+      const revertReason = await extractRevertReason(client, txHash, receipt);
+      return {
+        status: "FAILED",
+        secondsPending,
+        revertReason,
+        recommendation: revertReason
+          ? `Transaction reverted: ${revertReason}. Fix the cause before resubmitting.`
+          : "Transaction reverted on-chain. Do not blindly resubmit — re-simulate first.",
+      };
+    }
+
+    const tx = await client.getTransaction({ hash: txHash }).catch(() => null);
+
+    if (!tx) {
+      // Not visible anywhere. Before the grace window this is Monad's async
+      // propagation, not an eviction — the single most common way naive
+      // polling logic reports a false "dropped".
+      if (elapsedMs < NEVER_SEEN_GRACE_MS) {
+        return {
+          status: "NULL_PENDING",
+          secondsPending,
+          recommendation:
+            "The node has not surfaced this transaction yet. This is normal on an async mempool — keep waiting.",
+        };
+      }
+      return {
+        status: "DROPPED",
+        secondsPending,
+        recommendation: "The transaction is no longer known to the node. Resubmit it.",
+      };
+    }
+
+    if (elapsedMs >= STUCK_AFTER_MS) {
+      return {
+        status: "STUCK",
+        secondsPending,
+        recommendation:
+          "Still pending well past the expected inclusion time — likely underpriced or blocked by an earlier nonce. Consider a replacement transaction.",
+      };
+    }
+
+    return {
+      status: "NULL_PENDING",
+      secondsPending,
+      recommendation: "Pending in the mempool and propagating normally. Keep waiting.",
+    };
+  } catch {
+    // An RPC failure is our problem, not evidence about the transaction.
+    return {
+      status: "NULL_PENDING",
+      secondsPending,
+      recommendation: "Could not reach the node this poll. Status is unchanged — retry shortly.",
+    };
+  }
 }
 
 // ── 4. AI Explainer ────────────────────────────────────────────────────

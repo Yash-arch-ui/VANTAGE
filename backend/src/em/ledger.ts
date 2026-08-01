@@ -38,6 +38,26 @@ export type ExecutionLedgerRow = {
   created_at: string;
 };
 
+/**
+ * A ledger row as the API exposes it: everything the audit timeline needs,
+ * minus the heavyweight forecast_json blob, plus the riskLevel projected out
+ * of it.
+ */
+export type LedgerListItem = {
+  id: string;
+  tx_from: string;
+  tx_to: string;
+  tx_value: string | null;
+  policy_action: string;
+  policy_reason: string;
+  explanation: string | null;
+  user_action: string | null;
+  outcome: string | null;
+  tx_hash: string | null;
+  risk_level: string | null;
+  created_at: string;
+};
+
 export type RecordEntryInput = {
   txFrom: string;
   txTo: string;
@@ -280,6 +300,82 @@ export function countEvaluations(address: string): number {
   } catch (err) {
     console.error(`[ledger] countEvaluations failed for "${address}":`, err);
     return 0;
+  }
+}
+
+/**
+ * Newest-first page of ledger rows, optionally narrowed to one contract.
+ * `total` is the count matching the same filter (not the page), so a UI can
+ * paginate without a second call.
+ *
+ * forecast_json is deliberately NOT returned — it is a multi-KB blob per row.
+ * The one field a timeline needs from it (riskLevel) is projected out here.
+ */
+export function getRecentEntries(
+  opts: { limit?: number; offset?: number; contract?: string } = {},
+): { items: LedgerListItem[]; total: number } {
+  const empty = { items: [] as LedgerListItem[], total: 0 };
+  if (!db) {
+    console.error("[ledger] getRecentEntries called before initDatabase — returning empty");
+    return empty;
+  }
+  try {
+    // Clamp rather than reject: a bad limit should degrade to a sane page,
+    // not 500 a dashboard.
+    const limit = Math.min(100, Math.max(1, Math.floor(opts.limit ?? 25)));
+    const offset = Math.max(0, Math.floor(opts.offset ?? 0));
+
+    let contract: string | null = null;
+    if (opts.contract !== undefined) {
+      if (!ADDRESS_RE.test(opts.contract)) {
+        console.error(`[ledger] getRecentEntries: invalid address format "${opts.contract}"`);
+        return empty;
+      }
+      contract = opts.contract;
+    }
+
+    const where = contract ? "WHERE tx_to = ?" : "";
+    const filterArgs = contract ? [contract] : [];
+
+    const totalRow = db
+      .prepare(`SELECT COUNT(*) AS c FROM execution_ledger ${where}`)
+      .get(...filterArgs) as { c: number };
+
+    const rows = db
+      .prepare(
+        `SELECT id, tx_from, tx_to, tx_value, forecast_json, policy_action, policy_reason,
+                explanation, user_action, outcome, tx_hash, created_at
+         FROM execution_ledger ${where}
+         ORDER BY created_at DESC, id DESC
+         LIMIT ? OFFSET ?`,
+      )
+      .all(...filterArgs, limit, offset) as (Omit<LedgerListItem, "risk_level"> & {
+      forecast_json: string;
+    })[];
+
+    const items = rows.map(({ forecast_json, ...rest }) => ({
+      ...rest,
+      risk_level: parseRiskLevel(forecast_json),
+    }));
+
+    return { items, total: totalRow.c };
+  } catch (err) {
+    console.error("[ledger] getRecentEntries failed:", err);
+    return empty;
+  }
+}
+
+/**
+ * Pull riskLevel out of a stored forecast blob. Rows written by older versions
+ * (or a truncated write) must not break the whole page, so anything unparseable
+ * yields null rather than throwing.
+ */
+function parseRiskLevel(forecastJson: string): string | null {
+  try {
+    const parsed = JSON.parse(forecastJson) as { riskLevel?: unknown };
+    return typeof parsed.riskLevel === "string" ? parsed.riskLevel : null;
+  } catch {
+    return null;
   }
 }
 
