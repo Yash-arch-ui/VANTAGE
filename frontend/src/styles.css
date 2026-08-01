@@ -1,0 +1,187 @@
+@import "tailwindcss" source(none);
+@source "../src";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --color-surface: var(--surface);
+  --color-text-secondary: var(--text-secondary);
+
+  /* Verdict triad. These are semantic, not decorative: every risk surface in
+     the app maps a policy action onto exactly one of them, so a user learns
+     the colour once. */
+  --color-safe: var(--safe);
+  --color-caution: var(--caution);
+  --color-danger: var(--danger);
+
+  --font-sans: "Geist", ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, "SFMono-Regular", monospace;
+  --font-serif: "Instrument Serif", "PP Editorial New", ui-serif, Georgia, serif;
+}
+
+:root {
+  --radius: 0.75rem;
+
+  /* Vantage palette */
+  --background: #08080A;
+  --foreground: #F3F4F6;
+  --surface: #0E0E11;
+  --text-secondary: #8B8D98;
+
+  /* PROCEED / WARN + HOLD_AND_RECHECK + SUGGEST_ADJUSTMENT / ABORT */
+  --safe: #10B981;
+  --caution: #F59E0B;
+  --danger: #EF4444;
+
+  --card: #0E0E11;
+  --card-foreground: #F3F4F6;
+  --popover: #0E0E11;
+  --popover-foreground: #F3F4F6;
+  --primary: #F3F4F6;
+  --primary-foreground: #08080A;
+  --secondary: #16161A;
+  --secondary-foreground: #F3F4F6;
+  --muted: #16161A;
+  --muted-foreground: #8B8D98;
+  --accent: #16161A;
+  --accent-foreground: #F3F4F6;
+  --destructive: #EF4444;
+  --destructive-foreground: #F3F4F6;
+  --border: rgba(255, 255, 255, 0.06);
+  --input: rgba(255, 255, 255, 0.08);
+  --ring: rgba(255, 255, 255, 0.2);
+}
+
+.dark {
+  --background: #08080A;
+  --foreground: #F3F4F6;
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+    outline: none;
+  }
+
+  html {
+    background-color: #08080A;
+    color: #F3F4F6;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  body {
+    background-color: #08080A;
+    color: #F3F4F6;
+    font-family: var(--font-sans);
+    font-feature-settings: "ss01", "cv11";
+  }
+
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* Glass surfaces. The upstream project referenced these classes from JSX but
+   never defined them, so every card using them rendered flat. */
+.vantage-glass {
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  backdrop-filter: blur(12px) saturate(140%);
+  -webkit-backdrop-filter: blur(12px) saturate(140%);
+}
+
+.vantage-glass-heavy {
+  background: rgba(14, 14, 17, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(24px) saturate(160%);
+  -webkit-backdrop-filter: blur(24px) saturate(160%);
+}
+
+/* The house easing curve — a slight overshoot-free settle. */
+.ease-precision {
+  transition-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* Tactile noise canvas */
+.noise-overlay {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 100;
+  opacity: 0.04;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%' height='100%' filter='url(%23n)' opacity='0.9'/></svg>");
+}
+
+/* Grid blueprint backdrop */
+.grid-blueprint {
+  background-image:
+    linear-gradient(to right, rgba(255, 255, 255, 0.025) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.025) 1px, transparent 1px);
+  background-size: 100px 100px;
+}
+
+/* Flowing dashed line */
+@keyframes dashflow {
+  to { stroke-dashoffset: -40; }
+}
+.dash-flow {
+  stroke-dasharray: 6 6;
+  animation: dashflow 1.6s linear infinite;
+}
+
+/* Live pulse dot */
+@keyframes pulse-live {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(0.85); }
+}
+.pulse-live {
+  animation: pulse-live 1.6s ease-in-out infinite;
+}
+
+/* Breathing background bell */
+@keyframes breathe {
+  0%, 100% { transform: scale(1); opacity: 0.55; }
+  50% { transform: scale(1.05); opacity: 0.75; }
+}
+.bell-breathe {
+  animation: breathe 15s linear infinite;
+}
+
+/* Marquee for footer watermark */
+@keyframes marquee {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+.marquee {
+  animation: marquee 40s linear infinite;
+}
