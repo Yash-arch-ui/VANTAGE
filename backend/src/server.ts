@@ -9,21 +9,42 @@ import { startWatchdog, WATCH_POLL_INTERVAL_MS } from "./services/watchdog.js";
 dotenv.config();
 
 const app = express();
-const PORT = process.env.PORT ? parseInt(process.env.PORT) : 4000;
+
+/**
+ * A non-numeric PORT (an empty string, a stray space, a typo) used to parse to
+ * NaN, and `listen(NaN)` silently binds a random ephemeral port — the log then
+ * claims "listening on port NaN" while every health check against the expected
+ * port fails.
+ */
+function resolvePort(raw: string | undefined): number {
+  if (raw === undefined) return 4000;
+  const parsed = Number(raw);
+  if (!Number.isInteger(parsed) || parsed < 0 || parsed > 65535) {
+    console.error(`Invalid PORT "${raw}" — falling back to 4000.`);
+    return 4000;
+  }
+  return parsed;
+}
+
+const PORT = resolvePort(process.env.PORT);
 
 app.use(cors({ origin: true }));
 app.use(express.json());
 
 // Execution Memory — open/create the SQLite ledger + calibration store before
 // any request can touch it. Idempotent: existing rows are never wiped.
+//
+// This is fatal, not degradable. Without the ledger the service cannot record
+// an evaluation, hand back an entryId, score a contract or feed the watchdog —
+// it answers 200 on every route while silently storing nothing, which is worse
+// than being down because a health check still passes. Exit so the deploy fails
+// visibly instead. (The watchdog below is genuinely optional and does degrade.)
 try {
   initDatabase(config.databasePath);
   console.log(`Execution Memory initialized at ${config.databasePath}`);
 } catch (err) {
-  console.error(
-    "Execution Memory init failed — ledger/calibration will degrade gracefully:",
-    err,
-  );
+  console.error(`FATAL: Execution Memory init failed at "${config.databasePath}":`, err);
+  process.exit(1);
 }
 
 app.get("/health", (_req, res) => {
