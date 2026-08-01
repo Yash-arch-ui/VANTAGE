@@ -1,10 +1,12 @@
+import "./_env.js"; // MUST be first: loads .env before anything reads process.env
 import { createPublicClient, createWalletClient, http, parseAbi, encodeFunctionData } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { monadTestnet } from 'viem/chains';
 
-const rpcUrl = 'https://testnet-rpc.monad.xyz';
-const privateKey = '571ec6a67b252731cc600dde594cb10a0c76e57f2460146667291384da49a247';
-const account = privateKeyToAccount('0x' + privateKey);
+const rpcUrl = process.env.RPC_URL ?? 'https://testnet-rpc.monad.xyz';
+const privateKey = process.env.PRIVATE_KEY;
+if (!privateKey) throw new Error('PRIVATE_KEY is not set — copy .env.example to .env');
+const account = privateKeyToAccount(`0x${privateKey.replace(/^0x/, '')}`);
 const AMM = '0x7567C23BE5CB52F3B270562180776A95f1bbCa8e' as `0x${string}`;
 
 const client = createPublicClient({ chain: monadTestnet, transport: http(rpcUrl) });
