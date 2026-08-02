@@ -93,7 +93,7 @@ function getPublicClient(): Client {
   if (!_publicClient) {
     _publicClient = createPublicClient({
       chain: monadTestnet,
-      transport: http(config.rpcUrl),
+      transport: http(config.rpcUrl, { timeout: 15_000 }),
     });
   }
   return _publicClient;

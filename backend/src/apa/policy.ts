@@ -31,7 +31,7 @@ function getPublicClient(): ReturnType<typeof createPublicClient> | null {
   try {
     _publicClient = createPublicClient({
       chain: monadTestnet,
-      transport: http(rpcUrl),
+      transport: http(rpcUrl, { timeout: 15_000 }),
     });
     return _publicClient;
   } catch {

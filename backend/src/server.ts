@@ -31,6 +31,11 @@ const PORT = resolvePort(process.env.PORT);
 app.use(cors({ origin: true }));
 app.use(express.json());
 
+app.use((req: Request, _res: Response, next: NextFunction) => {
+  console.log(`[http] ${req.method} ${req.url} — ${new Date().toISOString()}`);
+  next();
+});
+
 // Execution Memory — open/create the SQLite ledger + calibration store before
 // any request can touch it. Idempotent: existing rows are never wiped.
 //
