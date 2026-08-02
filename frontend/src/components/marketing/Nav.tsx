@@ -3,9 +3,9 @@ import { Link } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 
 const navLinks = [
-  { label: "guard", to: "/app" as const },
-  { label: "monitor", to: "/monitor" as const },
-  { label: "ledger", to: "/ledger" as const },
+  { label: "Guard", to: "/app" as const },
+  { label: "Monitor", to: "/monitor" as const },
+  { label: "Ledger", to: "/ledger" as const },
 ] as const;
 
 export function Nav() {
@@ -28,7 +28,7 @@ export function Nav() {
           <span className="grid h-6 w-6 place-items-center rounded-sm border border-white/15 bg-white/[0.02]">
             <span className="h-1.5 w-1.5 rounded-full bg-white" />
           </span>
-          <span className="text-[13px] tracking-tight text-white/90">vantage</span>
+          <span className="text-[13px] tracking-tight text-white/90">Vantage</span>
         </Link>
 
         <nav className="hidden items-center gap-8 text-[13px] md:flex">

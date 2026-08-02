@@ -5,6 +5,7 @@ import { useAccount, useSendTransaction } from "wagmi";
 import type { Hex } from "viem";
 import { AppShell } from "../components/app-shell";
 import { Evaluating } from "../components/guard/evaluating";
+import { PoolReserves } from "../components/guard/pool-reserves";
 import { VerdictPanel } from "../components/guard/verdict-panel";
 import { WatcherStrip } from "../components/guard/watcher-strip";
 import { PRESETS, useTxBuilder, type BuiltTx, type Preset } from "../hooks/useTxBuilder";
@@ -281,6 +282,10 @@ function GuardConsole() {
 
         {/* Verdict */}
         <div className="space-y-6">
+          {/* Live reserves are only meaningful for the swap preset — the pool is
+              what the drift check moves against. Claim and approval target other
+              contracts, so the panel is not shown there. */}
+          {preset.id === "swap" && <PoolReserves />}
           {built && (
             <p className="tabular text-[10px] uppercase tracking-[0.2em] text-text-secondary">
               {built.summary}
