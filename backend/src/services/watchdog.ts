@@ -11,6 +11,7 @@
 import {
   createPublicClient,
   http,
+  maxUint256,
   parseAbi,
   type Address,
 } from "viem";
@@ -144,6 +145,13 @@ async function readReserves(client: Client, address: Address): Promise<Reserves 
 }
 
 /** Observer's outstanding ERC20 allowance to the watched contract, vs their balance. */
+function formatApprovalPct(allowance: bigint, ratio: number): string {
+  if (allowance >= maxUint256) return "unlimited (max uint256)";
+  const pct = ratio * 100;
+  if (pct > 1000) return ">1000%";
+  return `${pct.toFixed(0)}%`;
+}
+
 async function checkApprovalExposure(
   client: Client,
   contract: Address,
@@ -283,7 +291,7 @@ export async function pollContract(
       alerts.push({
         type: "approval_exposure",
         severity: "warning",
-        message: `Observer has a large outstanding approval to this contract (allowance=${exposure.allowance}, balance=${exposure.balance}, ~${(exposure.ratio * 100).toFixed(0)}% of balance)`,
+        message: `Observer has a large outstanding approval to this contract (allowance=${exposure.allowance}, balance=${exposure.balance}, ~${formatApprovalPct(exposure.allowance, exposure.ratio)} of balance)`,
       });
     } else if (exposure) {
       // The allowance was readable and is no longer excessive — revoked, spent
