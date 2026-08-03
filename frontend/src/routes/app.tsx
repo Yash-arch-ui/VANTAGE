@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { useAccount, useSendTransaction } from "wagmi";
 import type { Hex } from "viem";
 import { AppShell } from "../components/app-shell";
+import { GuardBackground } from "../components/backgrounds/GuardBackground";
 import { Evaluating } from "../components/guard/evaluating";
 import { PoolReserves } from "../components/guard/pool-reserves";
 import { VerdictPanel } from "../components/guard/verdict-panel";
@@ -208,7 +209,13 @@ function GuardConsole() {
 
   return (
     <AppShell>
-      <header className="mb-8">
+      {/* Ambient backdrop. Fixed, inset-0, z-0, pointer-events none — strictly
+          behind the positioned content below; never intercepts a click. */}
+      <GuardBackground />
+      {/* relative z-10 lifts the console content into a positioned layer so it
+          paints unambiguously above the z-0 background (static content would
+          otherwise paint beneath a fixed z-0 element). */}
+      <header className="relative z-10 mb-8">
         <p className="tabular text-[10px] uppercase tracking-[0.3em] text-text-secondary">
           Pre-submission guard
         </p>
@@ -219,7 +226,7 @@ function GuardConsole() {
         </p>
       </header>
 
-      <div className="grid gap-6 lg:grid-cols-[380px_1fr]">
+      <div className="relative z-10 grid gap-6 lg:grid-cols-[380px_1fr]">
         {/* Builder */}
         <section className="vantage-glass h-fit rounded-2xl p-6">
           <p className="tabular text-[10px] uppercase tracking-[0.2em] text-text-secondary">

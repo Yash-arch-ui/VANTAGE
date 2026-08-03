@@ -1,9 +1,10 @@
 "use client";
 import * as React from "react";
 import { motion, useScroll, useTransform, MotionValue } from "motion/react";
+import Orb from "./Orb";
 
 const COPY =
-  "You sign a transaction based on what a screen told you a moment ago. By the time it executes, the chain has moved. The price is worse, the slot is gone, the call reverts — and you find out afterwards, from a failed receipt. Vantage runs it first, against the chain as it is right now, and tells you before you sign.";
+  "On a chain doing 10,000 TPS, now is already gone.🛡️ Pre-Execution Shield Simulates your transaction against live state — before you sign.👁️ Watchdog Monitors every contract 24/7. Reserve shifts, contention spikes, failure surges — you know before they Other tools warn you generically.Vantage knows this chain";
 
 type Token =
   | { kind: "token"; value: string; animIndex: number | null }
@@ -122,6 +123,22 @@ export function ScrollManifesto() {
       className="relative z-10 w-full bg-[#08080A]"
       style={{ height: "220vh" }}
     >
+      {/*
+        Orb backdrop, strictly below the thesis text. It is the first
+        painted layer (z-0) so the grid blueprint and vignette sit on top of
+        it, and pointer-events: none guarantees the sticky text and its
+        scroll-reveal never lose an interaction. Purely decorative — aria-hidden.
+      */}
+      <div aria-hidden className="pointer-events-none absolute inset-0 z-0 opacity-70">
+        <Orb
+          hoverIntensity={2}
+          rotateOnHover
+          hue={0}
+          forceHoverState={false}
+          backgroundColor="#000000"
+        />
+      </div>
+
       {/* Soft gradient top edge instead of hard border */}
       <div className="pointer-events-none absolute top-0 inset-x-0 h-40 bg-gradient-to-b from-[#08080A] via-[#08080A]/60 to-transparent" />
       <div className="pointer-events-none absolute bottom-0 inset-x-0 h-40 bg-gradient-to-t from-[#08080A] via-[#08080A]/60 to-transparent" />

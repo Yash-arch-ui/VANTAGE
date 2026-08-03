@@ -6,7 +6,10 @@ import { ArrowUpRight } from "lucide-react";
 import { ParametricMesh } from "../parametric-mesh";
 
 /** The four failure modes Vantage exists to catch, in the user's words. */
-const FAILURES = ["a worse price.", "a silent revert.", "a vanished tx.", "a slot already gone."];
+const FAILURES = [  "a worse price.",
+  "a burned fee and nothing else.",
+  "a transaction that never landed.",
+  "a silent revert.",];
 
 export function Hero() {
   const [index, setIndex] = useState(0);
@@ -30,7 +33,7 @@ export function Hero() {
           transition={{ delay: 0.2, duration: 0.8 }}
           className="tabular text-[10px] uppercase tracking-[0.3em] text-text-secondary"
         >
-          Pre-submission guard · Monad
+          Pre-submission guard X WATCHDOG SPEC · Monad
         </motion.p>
 
         <motion.h1
@@ -64,9 +67,7 @@ export function Hero() {
           transition={{ delay: 0.6, duration: 0.9 }}
           className="mt-8 max-w-xl text-base leading-relaxed text-text-secondary"
         >
-          Vantage takes your prepared, unsigned transaction and runs it against the chain as it is
-          right now — no gas, nothing committed. Then it tells you, in one sentence, what will
-          actually happen.
+Vantage simulates your transaction before you sign, scores every contract in real-time, and watches the chain 24/7 — so parallel execution works for you, not against you.
         </motion.p>
 
         <motion.div
