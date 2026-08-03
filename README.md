@@ -123,11 +123,11 @@ Instead of asking users to interpret raw execution data, Vantage converts verifi
 
 Possible recommendations include:
 
-- ✅ Proceed
-- ⏳ Wait
-- 🔄 Hold & Re-check
-- ⛽ Adjust Execution Parameters
-- ❌ Cancel Transaction
+-  Proceed
+-  Wait
+-  Hold & Re-check
+-  Adjust Execution Parameters
+-  Cancel Transaction
 
 Every recommendation is accompanied by an explanation referencing the exact blockchain signals that produced it.
 
@@ -383,11 +383,11 @@ Its responsibility is to convert technical execution data into actionable recomm
 
 The Policy Agent may recommend:
 
-- ✅ Proceed
-- ⏳ Wait
-- 🔄 Hold & Re-check
-- ⛽ Retry under improved conditions
-- ❌ Cancel execution
+-  Proceed
+-  Wait
+-  Hold & Re-check
+-  Retry under improved conditions
+-  Cancel execution
 
 Every recommendation is accompanied by a human-readable explanation describing exactly which deterministic signals influenced the decision.
 
