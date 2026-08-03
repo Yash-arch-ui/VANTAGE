@@ -4,5 +4,6 @@ dist/
 .nitro/
 .vercel/
 .tanstack/
+.next/
 src/routeTree.gen.ts
 .env

@@ -285,7 +285,9 @@ export function GooeyNav({
   };
   const clearHoverPill = () => {
     hoveredLiRef.current = null;
-    navRef.current?.querySelectorAll(".gooey-hover").forEach((li) => li.classList.remove("gooey-hover"));
+    navRef.current
+      ?.querySelectorAll(".gooey-hover")
+      .forEach((li) => li.classList.remove("gooey-hover"));
     filterRef.current?.classList.remove("active");
     textRef.current?.classList.remove("active");
   };
@@ -297,7 +299,9 @@ export function GooeyNav({
   const handleHoverEnter = (li: HTMLLIElement) => {
     if (hoveredLiRef.current === li) return;
     hoveredLiRef.current = li;
-    navRef.current?.querySelectorAll(".gooey-hover").forEach((el) => el.classList.remove("gooey-hover"));
+    navRef.current
+      ?.querySelectorAll(".gooey-hover")
+      .forEach((el) => el.classList.remove("gooey-hover"));
     updateEffectPosition(li);
     if (filterRef.current) {
       filterRef.current.classList.add("active");
@@ -367,8 +371,7 @@ export function GooeyNav({
     }
     const resizeObserver = new ResizeObserver(() => {
       const currentActiveLi = navRef.current?.querySelectorAll("li")[activeIndex] as
-        | HTMLElement
-        | undefined;
+        HTMLElement | undefined;
       if (currentActiveLi) {
         updateEffectPosition(currentActiveLi);
       }

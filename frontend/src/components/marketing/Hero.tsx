@@ -6,10 +6,12 @@ import { ArrowUpRight } from "lucide-react";
 import { ParametricMesh } from "../parametric-mesh";
 
 /** The four failure modes Vantage exists to catch, in the user's words. */
-const FAILURES = [  "a worse price.",
+const FAILURES = [
+  "a worse price.",
   "a burned fee and nothing else.",
   "a transaction that never landed.",
-  "a silent revert.",];
+  "a silent revert.",
+];
 
 export function Hero() {
   const [index, setIndex] = useState(0);
@@ -67,7 +69,8 @@ export function Hero() {
           transition={{ delay: 0.6, duration: 0.9 }}
           className="mt-8 max-w-xl text-base leading-relaxed text-text-secondary"
         >
-Vantage simulates your transaction before you sign, scores every contract in real-time, and watches the chain 24/7 — so parallel execution works for you, not against you.
+          Vantage simulates your transaction before you sign, scores every contract in real-time,
+          and watches the chain 24/7 — so parallel execution works for you, not against you.
         </motion.p>
 
         <motion.div
