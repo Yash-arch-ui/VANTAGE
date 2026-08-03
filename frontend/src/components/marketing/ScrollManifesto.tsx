@@ -4,7 +4,7 @@ import { motion, useScroll, useTransform, MotionValue } from "motion/react";
 import Orb from "./Orb";
 
 const COPY =
-  "On a chain doing 10,000 TPS, now is already gone.🛡️ Pre-Execution Shield Simulates your transaction against live state — before you sign.👁️ Watchdog Monitors every contract 24/7. Reserve shifts, contention spikes, failure surges — you know before they Other tools warn you generically.Vantage knows this chain";
+  "On a chain doing 10,000 TPS, now is already gone. Pre-Execution Shield Simulates your transaction against live state — before you sign. Watchdog Monitors every contract 24/7. Reserve shifts, contention spikes, failure surges — are all tracked before they hit your wallet . Vantage knows this chain";
 
 type Token =
   | { kind: "token"; value: string; animIndex: number | null }
