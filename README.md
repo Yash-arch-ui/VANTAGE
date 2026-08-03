@@ -16,9 +16,6 @@
 **🔗 Website:**  
 > **vantage-two-iota.vercel.app**
 
-### 📑 Presentation
-
-> **[Paste Pitch Deck Link Here]**
 
 </div>
 
