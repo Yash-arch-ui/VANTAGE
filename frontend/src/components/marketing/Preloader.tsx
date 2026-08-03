@@ -33,7 +33,7 @@ export function Preloader({ onComplete }: { onComplete: () => void }) {
           transition={{ delay: 0.3, duration: 0.6 }}
           className="text-[10px] font-mono uppercase tracking-[0.3em] text-[#8B8D98]"
         >
-          Pre-submission guard
+          Pre-submission guard X WATCHDOG SPEC
         </motion.div>
       </div>
     </motion.div>

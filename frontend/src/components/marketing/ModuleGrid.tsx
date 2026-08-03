@@ -1,6 +1,7 @@
 "use client";
 import { motion } from "motion/react";
 import { SpotlightCard } from "../spotlight-card";
+import CursorGrid from "./CursorGrid";
 
 /**
  * The seven modules, each stated as the problem it solves and whether it uses
@@ -69,49 +70,76 @@ const MODULES = [
 export function ModuleGrid() {
   return (
     <section className="relative mx-auto max-w-[1400px] px-6 py-32">
-      <p className="tabular text-[10px] uppercase tracking-[0.3em] text-text-secondary">
-        / 03 · What is actually running
-      </p>
-      <h2 className="mt-6 max-w-2xl font-serif text-4xl leading-tight tracking-tight md:text-5xl">
-        Seven modules. Six of them are just code.
-      </h2>
-      <p className="mt-6 max-w-2xl text-base leading-relaxed text-text-secondary">
-        Real simulation, real math, real on-chain data. Exactly one component uses an LLM, and its
-        only job is turning already-computed numbers into a sentence a human can read.
-      </p>
+      {/*
+        Cursor-tracked grid backdrop, strictly below every card. It listens on
+        window (trackWindow) so cells still light up as the cursor passes over
+        the cards above, and pointer-events: none guarantees the cards and text
+        never lose an interaction. Purely decorative — aria-hidden.
+      */}
+      <div aria-hidden className="pointer-events-none absolute inset-0 z-0 opacity-50">
+        <CursorGrid
+          cellSize={64}
+          color="#00E5FF"
+          radius={150}
+          falloff="smooth"
+          holdTime={400}
+          fadeDuration={900}
+          lineWidth={1}
+          maxOpacity={1}
+          fillOpacity={0.02}
+          gridOpacity={0}
+          cellRadius={0}
+          clickPulse
+          pulseSpeed={700}
+          trackWindow
+        />
+      </div>
 
-      <div className="mt-14 grid gap-4 md:grid-cols-3">
-        {MODULES.map((m, i) => (
-          <motion.div
-            key={m.n}
-            initial={{ opacity: 0, y: 20 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            viewport={{ once: true, margin: "-80px" }}
-            transition={{ delay: i * 0.05, duration: 0.6 }}
-            className={m.span}
-          >
-            <SpotlightCard className="h-full p-6">
-              <div className="flex items-start justify-between gap-4">
-                <span className="tabular text-[10px] uppercase tracking-[0.25em] text-text-secondary">
-                  {m.n}
-                </span>
-                <span
-                  className={`tabular rounded-full border px-2.5 py-1 text-[9px] uppercase tracking-[0.18em] ${
-                    m.ai
-                      ? "border-[color:var(--caution)]/30 bg-[color:var(--caution)]/10 text-[color:var(--caution)]"
-                      : "border-white/10 text-text-secondary"
-                  }`}
-                >
-                  {m.ai ? "AI" : "Deterministic"}
-                </span>
-              </div>
+      <div className="relative z-10">
+        <p className="tabular text-[10px] uppercase tracking-[0.3em] text-text-secondary">
+          / 03 · What is actually running
+        </p>
+        <h2 className="mt-6 max-w-2xl font-serif text-4xl leading-tight tracking-tight md:text-5xl">
+          Seven modules. Six of them are just code.
+        </h2>
+        <p className="mt-6 max-w-2xl text-base leading-relaxed text-text-secondary">
+          Real simulation, real math, real on-chain data. Exactly one component uses an LLM, and its
+          only job is turning already-computed numbers into a sentence a human can read.
+        </p>
 
-              <h3 className="mt-4 text-lg tracking-tight text-white/90">{m.title}</h3>
-              <p className="mt-2 text-sm leading-relaxed text-white/70">{m.problem}</p>
-              <p className="mt-3 text-xs leading-relaxed text-text-secondary">{m.how}</p>
-            </SpotlightCard>
-          </motion.div>
-        ))}
+        <div className="mt-14 grid gap-4 md:grid-cols-3">
+          {MODULES.map((m, i) => (
+            <motion.div
+              key={m.n}
+              initial={{ opacity: 0, y: 20 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              viewport={{ once: true, margin: "-80px" }}
+              transition={{ delay: i * 0.05, duration: 0.6 }}
+              className={m.span}
+            >
+              <SpotlightCard className="h-full p-6">
+                <div className="flex items-start justify-between gap-4">
+                  <span className="tabular text-[10px] uppercase tracking-[0.25em] text-text-secondary">
+                    {m.n}
+                  </span>
+                  <span
+                    className={`tabular rounded-full border px-2.5 py-1 text-[9px] uppercase tracking-[0.18em] ${
+                      m.ai
+                        ? "border-[color:var(--caution)]/30 bg-[color:var(--caution)]/10 text-[color:var(--caution)]"
+                        : "border-white/10 text-text-secondary"
+                    }`}
+                  >
+                    {m.ai ? "AI" : "Deterministic"}
+                  </span>
+                </div>
+
+                <h3 className="mt-4 text-lg tracking-tight text-white/90">{m.title}</h3>
+                <p className="mt-2 text-sm leading-relaxed text-white/70">{m.problem}</p>
+                <p className="mt-3 text-xs leading-relaxed text-text-secondary">{m.how}</p>
+              </SpotlightCard>
+            </motion.div>
+          ))}
+        </div>
       </div>
     </section>
   );

@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { ExternalLink } from "lucide-react";
 import { AppShell } from "../components/app-shell";
+import { LedgerBackground } from "../components/backgrounds/LedgerBackground";
 import { useLedger, useStats } from "../hooks/api";
 import { actionLabel, actionTone, riskTone, toneClasses } from "../lib/risk";
 import { relativeTime, shortAddress } from "../lib/format";
@@ -40,7 +41,10 @@ function LedgerPage() {
 
   return (
     <AppShell>
-      <header className="mb-8">
+      {/* Ambient backdrop. Fixed, inset-0, z-0, pointer-events none — strictly
+          behind the positioned content below; never intercepts a click. */}
+      <LedgerBackground />
+      <header className="relative z-10 mb-8">
         <p className="tabular text-[10px] uppercase tracking-[0.3em] text-text-secondary">
           Execution memory
         </p>
@@ -52,7 +56,7 @@ function LedgerPage() {
       </header>
 
       {/* Aggregates */}
-      <div className="mb-8 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="relative z-10 mb-8 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <div className="vantage-glass rounded-xl p-4">
           <p className="tabular text-[10px] uppercase tracking-[0.2em] text-text-secondary">
             Evaluated
@@ -88,7 +92,7 @@ function LedgerPage() {
       </div>
 
       {/* Timeline */}
-      <div className="overflow-x-auto">
+      <div className="relative z-10 overflow-x-auto">
         <table className="w-full min-w-[820px] border-collapse text-left">
           <thead>
             <tr className="tabular border-b border-white/[0.06] text-[10px] uppercase tracking-[0.2em] text-text-secondary">
@@ -177,7 +181,7 @@ function LedgerPage() {
       </div>
 
       {!isLoading && total === 0 && (
-        <div className="rounded-2xl border border-dashed border-white/[0.08] p-12 text-center">
+        <div className="relative z-10 rounded-2xl border border-dashed border-white/[0.08] p-12 text-center">
           <p className="text-sm text-text-secondary">
             Nothing recorded yet. Evaluate a transaction in the Guard console.
           </p>
@@ -185,7 +189,7 @@ function LedgerPage() {
       )}
 
       {(offset > 0 || hasMore) && (
-        <div className="mt-6 flex items-center gap-3">
+        <div className="relative z-10 mt-6 flex items-center gap-3">
           <button
             onClick={() => setOffset((o) => Math.max(0, o - PAGE_SIZE))}
             disabled={offset === 0}

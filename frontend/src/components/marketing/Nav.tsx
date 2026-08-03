@@ -1,12 +1,15 @@
 "use client";
 import { Link } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
+import { GooeyNav, type GooeyNavItem } from "./GooeyNav";
 
-const navLinks = [
-  { label: "Guard", to: "/app" as const },
-  { label: "Monitor", to: "/monitor" as const },
-  { label: "Ledger", to: "/ledger" as const },
-] as const;
+// Same links as the app shell nav (Guard / Monitor / Ledger) — the gooey pill
+// tracks the active route automatically.
+const gooeyItems: GooeyNavItem[] = [
+  { label: "Guard", to: "/app" },
+  { label: "Monitor", to: "/monitor" },
+  { label: "Ledger", to: "/ledger" },
+];
 
 export function Nav() {
   const [scrolled, setScrolled] = useState(false);
@@ -31,18 +34,17 @@ export function Nav() {
           <span className="text-[13px] tracking-tight text-white/90">Vantage</span>
         </Link>
 
-        <nav className="hidden items-center gap-8 text-[13px] md:flex">
-          {navLinks.map((link) => (
-            <Link
-              key={link.label}
-              to={link.to}
-              className="text-white/55 transition-colors duration-300 hover:text-white"
-              activeProps={{ className: "text-white" }}
-            >
-              {link.label}
-            </Link>
-          ))}
-        </nav>
+        <div className="hidden text-[13px] md:block">
+          <GooeyNav
+            items={gooeyItems}
+            particleCount={15}
+            particleDistances={[90, 10]}
+            particleR={100}
+            animationTime={600}
+            timeVariance={300}
+            colors={[1, 2, 3, 1, 2, 3, 1, 4]}
+          />
+        </div>
 
         <Link
           to="/app"

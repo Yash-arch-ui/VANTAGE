@@ -1,6 +1,7 @@
 "use client";
 import { motion } from "motion/react";
 import { useStats } from "../../hooks/api";
+import MagicRings from "./MagicRings";
 
 /**
  * Real numbers from the ledger, not a claim about them. If the backend is
@@ -24,8 +25,35 @@ export function LiveStats() {
   ];
 
   return (
-    <section className="relative border-y border-white/5 bg-white/[0.01]">
-      <div className="mx-auto grid max-w-[1400px] gap-px px-6 py-14 sm:grid-cols-2 lg:grid-cols-4">
+    <section className="relative overflow-hidden border-y border-white/5 bg-white/[0.01]">
+      {/*
+        MagicRings shader animation, layered over the card. The renderer is
+        alpha-blended and sits below the stats (z-0 vs z-10), so the numbers
+        stay fully readable while the rings glow around them. Purely decorative
+        — aria-hidden and pointer-events: none.
+      */}
+      <div aria-hidden className="pointer-events-none absolute inset-0 z-0">
+        <MagicRings
+          color="#A855F7"
+          colorTwo="#6366F1"
+          ringCount={6}
+          speed={1}
+          attenuation={12}
+          lineThickness={2}
+          baseRadius={0.35}
+          radiusStep={0.1}
+          scaleRate={0.1}
+          opacity={0.5}
+          noiseAmount={0.08}
+          rotation={0}
+          ringGap={1.5}
+          fadeIn={0.7}
+          fadeOut={0.5}
+          followMouse={false}
+          parallax={0.05}
+        />
+      </div>
+      <div className="relative z-10 mx-auto grid max-w-[1400px] gap-px px-6 py-14 sm:grid-cols-2 lg:grid-cols-4">
         {tiles.map((tile, i) => (
           <motion.div
             key={tile.label}
@@ -41,7 +69,7 @@ export function LiveStats() {
           </motion.div>
         ))}
       </div>
-      <p className="tabular pb-8 text-center text-[10px] uppercase tracking-[0.25em] text-text-secondary">
+      <p className="relative z-10 tabular pb-8 text-center text-[10px] uppercase tracking-[0.25em] text-text-secondary">
         <span className="pulse-live mr-2 inline-block h-1.5 w-1.5 rounded-full bg-[color:var(--safe)]" />
         Live from the execution ledger
       </p>
