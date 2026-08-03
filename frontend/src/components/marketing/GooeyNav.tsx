@@ -38,10 +38,20 @@ const gooeyNavCss = `
     display: grid;
     place-items: center;
     z-index: 1;
+    transition:
+      left 0.45s var(--linear-ease),
+      top 0.45s var(--linear-ease),
+      width 0.45s var(--linear-ease),
+      height 0.45s var(--linear-ease);
   }
   .gooey-nav .effect.text {
     color: white;
-    transition: color 0.3s ease;
+    transition:
+      color 0.3s ease,
+      left 0.45s var(--linear-ease),
+      top 0.45s var(--linear-ease),
+      width 0.45s var(--linear-ease),
+      height 0.45s var(--linear-ease);
   }
   .gooey-nav .effect.text.active {
     color: black;
@@ -151,6 +161,12 @@ const gooeyNavCss = `
     opacity: 1;
     transform: scale(1);
   }
+  /* The pill glides under this li on hover, so its label must flip to black
+     to stay readable on the white blob. */
+  .gooey-nav li.gooey-hover {
+    color: black;
+    text-shadow: none;
+  }
   .gooey-nav li::after {
     content: "";
     position: absolute;
@@ -177,6 +193,7 @@ export function GooeyNav({
   const navRef = useRef<HTMLUListElement>(null);
   const filterRef = useRef<HTMLSpanElement>(null);
   const textRef = useRef<HTMLSpanElement>(null);
+  const hoveredLiRef = useRef<HTMLLIElement | null>(null);
   const { pathname } = useLocation();
   // The active item is derived from the actual route, so the gooey pill hugs
   // the page you are on — and stays hidden when none of the items match.
@@ -266,6 +283,50 @@ export function GooeyNav({
     Object.assign(textRef.current.style, styles);
     textRef.current.innerText = element.innerText;
   };
+  const clearHoverPill = () => {
+    hoveredLiRef.current = null;
+    navRef.current?.querySelectorAll(".gooey-hover").forEach((li) => li.classList.remove("gooey-hover"));
+    filterRef.current?.classList.remove("active");
+    textRef.current?.classList.remove("active");
+  };
+  /**
+   * The gooey pill chases the cursor: glide it under the hovered item and flip
+   * that label to black so it reads on the white blob. No particles on hover —
+   * the burst stays reserved for clicks.
+   */
+  const handleHoverEnter = (li: HTMLLIElement) => {
+    if (hoveredLiRef.current === li) return;
+    hoveredLiRef.current = li;
+    navRef.current?.querySelectorAll(".gooey-hover").forEach((el) => el.classList.remove("gooey-hover"));
+    updateEffectPosition(li);
+    if (filterRef.current) {
+      filterRef.current.classList.add("active");
+    }
+    if (textRef.current) {
+      textRef.current.classList.remove("active");
+      void textRef.current.offsetWidth;
+      textRef.current.classList.add("active");
+    }
+    li.classList.add("gooey-hover");
+  };
+  const handleHoverLeave = () => {
+    const activeLi = navRef.current?.querySelectorAll("li")[activeIndex] as HTMLElement | undefined;
+    clearHoverPill();
+    if (activeLi) {
+      // Rest the pill on the route's active item.
+      updateEffectPosition(activeLi);
+      textRef.current?.classList.add("active");
+      filterRef.current?.classList.add("active");
+    } else {
+      // Nothing matches this route — hide the pill entirely.
+      updateEffectPosition(undefined);
+    }
+  };
+  const handleMouseOver = (e: ReactMouseEvent<HTMLDivElement>) => {
+    const target = e.target as HTMLElement;
+    const li = target.closest("li");
+    if (li) handleHoverEnter(li);
+  };
   const handleClick = (e: ReactMouseEvent<HTMLAnchorElement>, index: number) => {
     if (activeIndex === index) return;
     // Move the pill immediately and fire the particle burst; the Link below
@@ -297,13 +358,17 @@ export function GooeyNav({
   useEffect(() => {
     if (!navRef.current || !containerRef.current) return;
     const activeLi = navRef.current.querySelectorAll("li")[activeIndex] as HTMLElement | undefined;
-    updateEffectPosition(activeLi);
     if (activeLi) {
+      updateEffectPosition(activeLi);
       textRef.current?.classList.add("active");
+      filterRef.current?.classList.add("active");
+    } else {
+      updateEffectPosition(undefined);
     }
     const resizeObserver = new ResizeObserver(() => {
       const currentActiveLi = navRef.current?.querySelectorAll("li")[activeIndex] as
-        HTMLElement | undefined;
+        | HTMLElement
+        | undefined;
       if (currentActiveLi) {
         updateEffectPosition(currentActiveLi);
       }
@@ -315,7 +380,12 @@ export function GooeyNav({
   return (
     <>
       <style>{gooeyNavCss}</style>
-      <div className="gooey-nav relative" ref={containerRef}>
+      <div
+        className="gooey-nav relative"
+        ref={containerRef}
+        onMouseOver={handleMouseOver}
+        onMouseLeave={handleHoverLeave}
+      >
         <nav className="relative flex" style={{ transform: "translate3d(0,0,0.01px)" }}>
           <ul
             ref={navRef}
