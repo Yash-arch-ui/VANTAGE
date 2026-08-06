@@ -44,7 +44,10 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
  *    <repo>/contracts/deployments.json — reached via ../../../ from src/psg or
  *    dist/psg.
  * 2. Backend-only deploy (rootDir: backend, so contracts/ is never present):
- *    dist/deployments.json — copied in by scripts/copy-assets.mjs.
+ *    backend/deployments.json — committed copy kept in sync with
+ *    contracts/deployments.json (reached via ../../ from src/psg or dist/psg).
+ * 3. dist/deployments.json — copied in by scripts/copy-assets.mjs from either
+ *    of the above.
  *
  * Without the file, KNOWN_CONTRACTS stays empty and every call takes the
  * generic path — which, combined with the old `from:` bug, made the deployed
@@ -52,6 +55,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
  */
 const DEPLOYMENTS_CANDIDATES = [
   resolve(__dirname, "../../../contracts/deployments.json"),
+  resolve(__dirname, "../../deployments.json"),
   resolve(__dirname, "../deployments.json"),
 ];
 
