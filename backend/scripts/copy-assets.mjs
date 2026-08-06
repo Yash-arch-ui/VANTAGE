@@ -12,7 +12,14 @@ import { fileURLToPath } from "node:url";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 /** Source path (relative to backend/) -> destination path. */
-const ASSETS = [["src/em/schema.sql", "dist/em/schema.sql"]];
+const ASSETS = [
+  ["src/em/schema.sql", "dist/em/schema.sql"],
+  // KNOWN_CONTRACTS (MockAMM/MockClaim) is keyed from deployments.json. A
+  // backend-only deploy (rootDir: backend) cannot resolve ../../../contracts/
+  // from dist/psg, so a copy must ship inside dist/ or the guard loses every
+  // known contract and degrades to the generic (historically buggy) call path.
+  ["../contracts/deployments.json", "dist/deployments.json"],
+];
 
 for (const [from, to] of ASSETS) {
   const src = resolve(root, from);

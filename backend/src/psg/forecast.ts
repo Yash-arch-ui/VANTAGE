@@ -36,16 +36,37 @@ function getPublicClient(): ReturnType<typeof createPublicClient> | null {
 // ── Deployments from JSON ──────────────────────────────────────────────
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const DEPLOYMENTS_PATH = resolve(__dirname, "../../../contracts/deployments.json");
+
+/**
+ * Candidate locations for deployments.json.
+ *
+ * 1. Full-monorepo layout (local dev, or a deploy that ships the whole repo):
+ *    <repo>/contracts/deployments.json — reached via ../../../ from src/psg or
+ *    dist/psg.
+ * 2. Backend-only deploy (rootDir: backend, so contracts/ is never present):
+ *    dist/deployments.json — copied in by scripts/copy-assets.mjs.
+ *
+ * Without the file, KNOWN_CONTRACTS stays empty and every call takes the
+ * generic path — which, combined with the old `from:` bug, made the deployed
+ * backend report "insufficient allowance" for every swap.
+ */
+const DEPLOYMENTS_CANDIDATES = [
+  resolve(__dirname, "../../../contracts/deployments.json"),
+  resolve(__dirname, "../deployments.json"),
+];
 
 function loadDeployments(): Record<string, string> {
-  try {
-    if (!existsSync(DEPLOYMENTS_PATH)) return {};
-    const raw = readFileSync(DEPLOYMENTS_PATH, "utf-8");
-    return JSON.parse(raw);
-  } catch {
-    return {};
+  for (const candidate of DEPLOYMENTS_CANDIDATES) {
+    try {
+      if (existsSync(candidate)) {
+        const raw = readFileSync(candidate, "utf-8");
+        return JSON.parse(raw);
+      }
+    } catch {
+      // try the next candidate
+    }
   }
+  return {};
 }
 
 const deployments = loadDeployments();
@@ -267,8 +288,11 @@ async function safeCall(
   tx: VantageTxRequest
 ): Promise<{ data: Hex | null; error?: unknown }> {
   try {
+    // `account` (not `from`) sets the eth_call sender — viem silently drops
+    // `from`, so a swap from a max-allowance wallet was simulated as address(0)
+    // and always reverted with a phantom "MockERC20: insufficient allowance".
     const result = await client.call({
-      from: tx.from,
+      account: tx.from,
       to: tx.to,
       data: tx.data,
       value: tx.value > 0n ? tx.value : undefined,
@@ -317,7 +341,6 @@ export async function getForecast(
     let gasEstimate: bigint | null = null;
     try {
       const est = await client.estimateGas({
-        from: tx.from,
         to: tx.to,
         data: tx.data,
         value: tx.value > 0n ? tx.value : undefined,
@@ -496,7 +519,6 @@ export async function checkValidity(
       try {
         const gasEstimate = await client
           .estimateGas({
-            from: tx.from,
             to: tx.to,
             data: tx.data,
             value: tx.value > 0n ? tx.value : undefined,
