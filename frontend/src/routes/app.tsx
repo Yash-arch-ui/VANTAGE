@@ -9,8 +9,14 @@ import { Evaluating } from "../components/guard/evaluating";
 import { PoolReserves } from "../components/guard/pool-reserves";
 import { VerdictPanel } from "../components/guard/verdict-panel";
 import { WatcherStrip } from "../components/guard/watcher-strip";
-import { PRESETS, useTxBuilder, type BuiltTx, type Preset } from "../hooks/useTxBuilder";
-import { useEvaluate, useReportOutcome, useTxStatus } from "../hooks/api";
+import {
+  PRESETS,
+  useTxBuilder,
+  type BuiltTx,
+  type Preset,
+  type SwapDirection,
+} from "../hooks/useTxBuilder";
+import { useEvaluate, useReportOutcome, useTxStatus, useVerdictRecheck } from "../hooks/api";
 import {
   ApiError,
   type EvaluateResponse,
@@ -42,6 +48,8 @@ function GuardConsole() {
   const { isConnected } = useAccount();
   const [preset, setPreset] = useState<Preset>(PRESETS[0]);
   const [input, setInput] = useState(PRESETS[0].defaultInput);
+  /** Which side of the pool the swap preset spends (token→MON or MON→token). */
+  const [swapDirection, setSwapDirection] = useState<SwapDirection>("token");
   const [result, setResult] = useState<EvaluateResponse | null>(null);
   // The exact transaction that was evaluated. Signing must use this and not a
   // rebuild — a rebuild would re-fetch the nonce and re-quote the pool, so the
@@ -66,6 +74,38 @@ function GuardConsole() {
 
   // Watch the broadcast transaction so the outcome we report is the real one.
   const { data: watchStatus } = useTxStatus(txHash ?? undefined, submittedAt ?? undefined);
+
+  // While a verdict is on screen and the user hasn't acted on it, poll the
+  // backend for a fresh re-verification so a pool move shows up as STALE_STATE
+  // without re-evaluating. Stopped as soon as the user signs, cancels, or edits
+  // the transaction (which resets result → entryId becomes undefined).
+  const recheckEntryId =
+    result && !txHash && !userAction ? result.entryId ?? undefined : undefined;
+  const { data: recheckData } = useVerdictRecheck(recheckEntryId);
+
+  // Merge the backend's fresh verdict over the original response. The recheck
+  // is a partial forecast + policy; everything else (explanation, entryId)
+  // stays untouched. Guarded so a recheck that found no change doesn't create a
+  // new state object every 10s.
+  useEffect(() => {
+    if (!recheckData) return;
+    setResult((prev) => {
+      if (!prev || prev.entryId !== recheckData.entryId) return prev;
+      if (
+        prev.forecast.outputDriftPercent === recheckData.forecast.outputDriftPercent &&
+        prev.forecast.riskLevel === recheckData.forecast.riskLevel &&
+        prev.policy.action === recheckData.policy.action &&
+        JSON.stringify(prev.forecast.flags) === JSON.stringify(recheckData.forecast.flags)
+      ) {
+        return prev;
+      }
+      return {
+        ...prev,
+        forecast: { ...prev.forecast, ...recheckData.forecast },
+        policy: recheckData.policy,
+      };
+    });
+  }, [recheckData]);
 
   const reset = () => {
     setResult(null);
@@ -92,6 +132,8 @@ function GuardConsole() {
     }
     setPreset(p);
     setInput(p.defaultInput);
+    // Direction only means something to the swap preset; start fresh elsewhere.
+    setSwapDirection("token");
     reset();
   };
 
@@ -105,6 +147,16 @@ function GuardConsole() {
     if (result && !isAwaitingOutcome) reset();
   };
 
+  /**
+   * Flipping the swap direction changes what the transaction does, so any
+   * verdict on screen is about the old transaction — invalidate it the same
+   * way editing the amount does.
+   */
+  const handleSwapDirectionChange = (direction: SwapDirection) => {
+    setSwapDirection(direction);
+    if (result && !isAwaitingOutcome) reset();
+  };
+
   const handleEvaluate = async () => {
     if (isAwaitingOutcome) {
       toast.error("Wait for the current transaction to settle before evaluating another.");
@@ -112,7 +164,7 @@ function GuardConsole() {
     }
     reset();
     try {
-      const next = await build(preset, input);
+      const next = await build(preset, input, swapDirection);
       setBuilt(next);
       const res = await evaluateMutation.mutateAsync(next.request);
       setResult(res);
@@ -256,7 +308,11 @@ function GuardConsole() {
                 htmlFor="tx-input"
                 className="tabular text-[10px] uppercase tracking-[0.2em] text-text-secondary"
               >
-                {preset.inputLabel}
+                {preset.id === "swap"
+                  ? swapDirection === "token"
+                    ? "Input amount (tokens)"
+                    : "Input amount (MON)"
+                  : preset.inputLabel}
               </label>
               <input
                 id="tx-input"
@@ -265,6 +321,23 @@ function GuardConsole() {
                 inputMode="decimal"
                 className="tabular mt-2 w-full rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-sm outline-none focus:border-white/25"
               />
+              {preset.id === "swap" && (
+                <div className="mt-4 grid grid-cols-2 gap-2">
+                  {(["token", "mon"] as const).map((direction) => (
+                    <button
+                      key={direction}
+                      onClick={() => handleSwapDirectionChange(direction)}
+                      className={`tabular ease-precision rounded-lg border px-3 py-2 text-[10px] uppercase tracking-[0.18em] transition-all ${
+                        swapDirection === direction
+                          ? "border-white/25 bg-white/[0.06] text-white"
+                          : "border-white/[0.06] text-text-secondary hover:border-white/15"
+                      }`}
+                    >
+                      {direction === "token" ? "Token → MON" : "MON → Token"}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
           )}
 

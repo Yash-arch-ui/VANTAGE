@@ -1,4 +1,4 @@
-import { MOCK_AMM_ADDRESS } from "../../config/contracts";
+import { AMM_ADDRESS } from "../../config/contracts";
 import { usePoolReserves } from "../../hooks/usePoolReserves";
 import { formatToken, shortAddress } from "../../lib/format";
 
@@ -17,7 +17,7 @@ function ReserveField({ label, value }: { label: string; value: string }) {
 }
 
 /**
- * Read-only live view of MockAMM's reserves, shown on the Guard console while
+ * Read-only live view of AMM's reserves, shown on the Guard console while
  * the Swap preset is selected. Purely informational — the reserve numbers a
  * swap would actually move, so the drift check reads against current state.
  * formatToken renders "—" for null, so loading and RPC failure both degrade to
@@ -36,7 +36,7 @@ export function PoolReserves() {
           Pool reserves
         </p>
         <span className="tabular ml-auto text-[10px] uppercase tracking-[0.2em] text-text-secondary">
-          {shortAddress(MOCK_AMM_ADDRESS)}
+          {shortAddress(AMM_ADDRESS)}
         </span>
       </div>
 

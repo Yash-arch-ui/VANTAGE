@@ -27,7 +27,7 @@ import {
 import { privateKeyToAccount } from "viem/accounts";
 import { monadTestnet } from "viem/chains";
 import { config } from "../src/config.js";
-import { MOCK_AMM_ADDRESS, mockAmmAbi } from "../src/psg/forecast.js";
+import { AMM_ADDRESS, ammAbi } from "../src/psg/forecast.js";
 import {
   watchTransaction,
   type WatchPoll,
@@ -78,7 +78,7 @@ async function nextNonce(
 async function getExpectedOutput(client: ReturnType<typeof createPublicClient>, amm: Address): Promise<bigint> {
   return client.readContract({
     address: amm,
-    abi: mockAmmAbi,
+    abi: ammAbi,
     functionName: "getExpectedOutput",
     args: [SWAP_INPUT_AMOUNT, true],
   });
@@ -86,7 +86,7 @@ async function getExpectedOutput(client: ReturnType<typeof createPublicClient>, 
 
 function encodeSwap(minOutput: bigint): Hex {
   return encodeFunctionData({
-    abi: mockAmmAbi,
+    abi: ammAbi,
     functionName: "swap",
     args: [minOutput, true, SWAP_INPUT_AMOUNT],
   });
@@ -249,8 +249,8 @@ async function main(): Promise<void> {
   if (!privateKey) throw new Error("PRIVATE_KEY is not set in .env");
   const account = privateKeyToAccount(`0x${privateKey}`);
 
-  const amm = MOCK_AMM_ADDRESS as Address;
-  if (!amm) throw new Error("MockAMM address missing from contracts/deployments.json");
+  const amm = AMM_ADDRESS as Address;
+  if (!amm) throw new Error("AMM address missing from contracts/deployments.json");
 
   const client = createPublicClient({ chain: monadTestnet, transport: http(rpcUrl) });
   const wallet = createWalletClient({ chain: monadTestnet, transport: http(rpcUrl), account });

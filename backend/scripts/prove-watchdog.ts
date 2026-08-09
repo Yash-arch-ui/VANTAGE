@@ -5,7 +5,7 @@
 // production: server.ts calls startWatchdog() only AFTER the HTTP listener is
 // up (W.6). The proof then:
 //
-//   1. Adds the real deployed MockAMM to the watchlist via POST /api/watchlist.
+//   1. Adds the real deployed AMM to the watchlist via POST /api/watchlist.
 //   2. Waits for 2+ distinct last_checked timestamps in the DB — real evidence
 //      the loop polls on its own 15s cadence (nothing is triggered manually).
 //   3. Calls manipulateReserves() on-chain to shift the token reserve +12%
@@ -39,7 +39,7 @@ import {
 import { privateKeyToAccount } from "viem/accounts";
 import { monadTestnet } from "viem/chains";
 import { config } from "../src/config.js";
-import { MOCK_AMM_ADDRESS, mockAmmAbi } from "../src/psg/forecast.js";
+import { AMM_ADDRESS, ammAbi } from "../src/psg/forecast.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const BACKEND_DIR = resolve(__dirname, "..");
@@ -90,8 +90,8 @@ async function main(): Promise<void> {
   if (!privateKey) throw new Error("PRIVATE_KEY is not set in .env");
   if (!rpcUrl) throw new Error("RPC_URL is not set in .env");
 
-  const amm = MOCK_AMM_ADDRESS as Address;
-  if (!amm) throw new Error("MockAMM address missing from contracts/deployments.json");
+  const amm = AMM_ADDRESS as Address;
+  if (!amm) throw new Error("AMM address missing from contracts/deployments.json");
 
   // Fresh throwaway DB + port so the proof never touches real dev state.
   const tmpDir = mkdtempSync(join(tmpdir(), "vantage-watchdog-proof-"));
@@ -141,8 +141,8 @@ async function main(): Promise<void> {
     }
     LOG("server log confirms '[watchdog] started' (started after listener was up)");
 
-    // ── 1. Add the deployed MockAMM to the watchlist via the real API. ─────
-    LOG("POST /api/watchlist { address: MockAMM, watchType: manual }");
+    // ── 1. Add the deployed AMM to the watchlist via the real API. ─────
+    LOG("POST /api/watchlist { address: AMM, watchType: manual }");
     const addRes = await fetch(`${baseUrl}/api/watchlist`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -150,7 +150,7 @@ async function main(): Promise<void> {
     });
     const addJson = (await addRes.json()) as { ok: boolean; added: boolean; address: string };
     LOG(`  → ${addRes.status} ok=${addJson.ok} added=${addJson.added} address=${addJson.address}`);
-    if (addRes.status !== 201 || !addJson.ok) throw new Error("failed to add MockAMM to watchlist");
+    if (addRes.status !== 201 || !addJson.ok) throw new Error("failed to add AMM to watchlist");
     if (!addJson.added) LOG("  (already watched — fine, idempotent)");
 
     // ── 2. Wait for 2+ distinct background polls, verified via last_checked
@@ -181,13 +181,13 @@ async function main(): Promise<void> {
     }
 
     // ── 3. Shift the pool on-chain via manipulateReserves (owner-only; the
-    //       .env key is the deployed MockAMM owner). +12% token reserve. ─────
+    //       .env key is the deployed AMM owner). +12% token reserve. ─────
     const publicClient = createPublicClient({ chain: monadTestnet, transport: http(rpcUrl) });
     const account = privateKeyToAccount(`0x${privateKey}`);
     const wallet = createWalletClient({ chain: monadTestnet, transport: http(rpcUrl), account });
 
     const [tokBefore, monBefore] = (await publicClient.readContract({
-      address: amm, abi: mockAmmAbi, functionName: "getReserves",
+      address: amm, abi: ammAbi, functionName: "getReserves",
     })) as [bigint, bigint];
     const newToken = (tokBefore * BigInt(100 + SHIFT_PCT)) / 100n;
     // Float division so the expected drift is exact (bigint division truncates):
@@ -197,13 +197,13 @@ async function main(): Promise<void> {
     LOG(`manipulateReserves(${newToken}, ${monBefore}) → token reserve +${SHIFT_PCT}% (expected drift ~${expectedDriftPct}%)`);
 
     const manipHash = await wallet.writeContract({
-      address: amm, abi: mockAmmAbi, functionName: "manipulateReserves",
+      address: amm, abi: ammAbi, functionName: "manipulateReserves",
       args: [newToken, monBefore], gas: 200_000n,
     });
     LOG(`  tx ${manipHash}`);
     const manipReceipt = await publicClient.waitForTransactionReceipt({ hash: manipHash, timeout: 60_000 });
     const [tokAfter] = (await publicClient.readContract({
-      address: amm, abi: mockAmmAbi, functionName: "getReserves",
+      address: amm, abi: ammAbi, functionName: "getReserves",
     })) as [bigint, bigint];
     LOG(`  mined in block ${manipReceipt.blockNumber} (status=${manipReceipt.status}); reserves after = token ${tokAfter}`);
     if (manipReceipt.status !== "success") throw new Error("manipulateReserves reverted");

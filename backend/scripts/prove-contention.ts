@@ -21,8 +21,8 @@ import { privateKeyToAccount } from "viem/accounts";
 import { monadTestnet } from "viem/chains";
 import { config } from "../src/config.js";
 import {
-  MOCK_AMM_ADDRESS,
-  mockAmmAbi,
+  AMM_ADDRESS,
+  ammAbi,
   getContentionScore,
   getPSGForecast,
 } from "../src/psg/forecast.js";
@@ -42,8 +42,8 @@ async function main() {
   if (!privateKey) throw new Error("PRIVATE_KEY is not set in .env");
   const account = privateKeyToAccount(`0x${privateKey}`);
 
-  const amm = MOCK_AMM_ADDRESS as Address;
-  if (!amm) throw new Error("MockAMM address missing from contracts/deployments.json");
+  const amm = AMM_ADDRESS as Address;
+  if (!amm) throw new Error("AMM address missing from contracts/deployments.json");
 
   const publicClient = createPublicClient({ chain: monadTestnet, transport: http(rpcUrl) });
   const walletClient = createWalletClient({ chain: monadTestnet, transport: http(rpcUrl), account });
@@ -51,7 +51,7 @@ async function main() {
   // swap(minOutput, inputIsToken=true, inputAmount) with minOutput=0 — pulls
   // tokens via transferFrom, cannot revert on output price.
   const swapData = encodeFunctionData({
-    abi: mockAmmAbi,
+    abi: ammAbi,
     functionName: "swap",
     args: [0n, true, SWAP_INPUT_AMOUNT],
   });

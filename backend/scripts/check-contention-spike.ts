@@ -1,14 +1,20 @@
 // CHECK 4 — contention_spike alert raised by the WATCHDOG (not PSG's scanner).
 //
-// Contention score = Swap logs for MockAMM in the last 180s / 20 (cap 1.0).
+// Contention score = Swap logs for AMM in the last 180s / 20 (cap 1.0).
 // The spike fires when one real poll sees >= 3x the previous poll's contention
 // (and >= 0.3 floor). To make that happen with real on-chain traffic:
-//   1. approve MockAMM to spend tokens (real tx) so token-input swaps succeed
+//   1. approve AMM to spend tokens (real tx) so token-input swaps succeed
 //   2. fire 3 baseline swaps, wait for a REAL poll to snapshot low contention
 //   3. fire a 20-swap burst (real txs, near-parallel, explicit nonces) → logs
 //      jump ~7x in a single window
 //   4. wait for the NEXT real poll cycle to raise contention_spike
 // Nothing here calls compareSnapshots / pollContract — only real HTTP + chain.
+//
+// Two modes:
+//   local  (default)  — reads ./vantage.db (the `npm run dev` backend) directly.
+//   remote — set API_BASE (e.g. a deployed Railway URL); the watchlist poll
+//            waits and the alert check then go over the HTTP API instead, so
+//            the script can drive a backend whose DB lives on the server.
 import "./_env.js";
 import {
   createPublicClient,
@@ -23,7 +29,10 @@ import { privateKeyToAccount } from "viem/accounts";
 import { monadTestnet } from "viem/chains";
 import Database from "better-sqlite3";
 import { config } from "../src/config.js";
-import { MOCK_AMM_ADDRESS, mockAmmAbi, getContentionScore } from "../src/psg/forecast.js";
+import { AMM_ADDRESS, ammAbi, getContentionScore } from "../src/psg/forecast.js";
+
+const API_BASE = (process.env.API_BASE ?? process.env.BACKEND_URL ?? "").replace(/\/$/, "");
+const apiUrl = (path: string): string => `${API_BASE}${path}`;
 
 const MOCK_ERC20 = "0x4832448eC5578b84c7b13E3EeBA2370Ccfbd5579" as Address;
 const SWAP_INPUT_AMOUNT = 1n * 10n ** 17n; // 0.1 token per swap
@@ -41,7 +50,7 @@ const erc20Abi = parseAbi([
 
 function encodeSwap(minOutput: bigint): Hex {
   return encodeFunctionData({
-    abi: mockAmmAbi,
+    abi: ammAbi,
     functionName: "swap",
     args: [minOutput, true, SWAP_INPUT_AMOUNT],
   });
@@ -63,33 +72,69 @@ async function sendAndConfirm(
   }
 }
 
-async function waitForPollChange(db: Database.Database, amm: string, lastSeen: string | null): Promise<string> {
+type WatchlistItem = { contract_address: string; last_checked: string | null };
+
+async function getLastChecked(amm: string, db?: Database.Database): Promise<string | null> {
+  if (API_BASE) {
+    try {
+      const res = await fetch(apiUrl("/api/watchlist"));
+      if (!res.ok) return null;
+      const json = (await res.json()) as { items: WatchlistItem[] };
+      return json.items.find((i) => i.contract_address.toLowerCase() === amm.toLowerCase())?.last_checked ?? null;
+    } catch {
+      return null;
+    }
+  }
+  if (!db) return null;
+  const row = db
+    .prepare("SELECT last_checked FROM watchlist WHERE contract_address = ?")
+    .get(amm) as { last_checked: string | null } | undefined;
+  return row?.last_checked ?? null;
+}
+
+async function waitForPollChange(amm: string, lastSeen: string | null, db?: Database.Database): Promise<string> {
   const deadline = Date.now() + 35_000;
   while (Date.now() < deadline) {
-    const row = db
-      .prepare("SELECT last_checked FROM watchlist WHERE contract_address = ?")
-      .get(amm) as { last_checked: string | null } | undefined;
-    const lc = row?.last_checked ?? null;
+    const lc = await getLastChecked(amm, db);
     if (lc !== null && lc !== lastSeen) return lc;
     await sleep(500);
   }
   return lastSeen;
 }
 
+type SpikeAlert = { id: string; type: string; severity: string; message: string; created_at: string };
+
+async function findSpikeAlert(amm: string, db?: Database.Database): Promise<SpikeAlert | undefined> {
+  if (API_BASE) {
+    try {
+      const res = await fetch(apiUrl(`/api/alerts?address=${amm}`));
+      if (!res.ok) return undefined;
+      const json = (await res.json()) as { items: SpikeAlert[] };
+      return json.items.find((a) => a.type === "contention_spike");
+    } catch {
+      return undefined;
+    }
+  }
+  if (!db) return undefined;
+  return db
+    .prepare("SELECT id, type, severity, message, created_at FROM alerts WHERE contract_address = ? AND type = 'contention_spike' ORDER BY created_at DESC LIMIT 1")
+    .get(amm) as SpikeAlert | undefined;
+}
+
 async function main(): Promise<void> {
   const { privateKey, rpcUrl } = config;
   const account = privateKeyToAccount(`0x${privateKey}`);
-  const amm = MOCK_AMM_ADDRESS as Address;
+  const amm = AMM_ADDRESS as Address;
   const client = createPublicClient({ chain: monadTestnet, transport: http(rpcUrl) });
   const wallet = createWalletClient({ chain: monadTestnet, transport: http(rpcUrl), account });
-  const db = new Database("./vantage.db", { readonly: true });
+  const db = API_BASE ? undefined : new Database("./vantage.db", { readonly: true });
 
-  console.log(`[${ts()}] sender=${account.address} AMM=${amm}`);
+  console.log(`[${ts()}] sender=${account.address} AMM=${amm} mode=${API_BASE ? `api(${API_BASE})` : "local db"}`);
 
   // 0. Current contention (expect ~0 — reverts emit no Swap logs)
   console.log(`[${ts()}] contention before = ${(await getContentionScore(amm)).toFixed(3)}`);
 
-  // 1. Approve MockAMM for 50% of balance — lets token-input swaps succeed.
+  // 1. Approve AMM for 50% of balance — lets token-input swaps succeed.
   const balance = (await client.readContract({
     address: MOCK_ERC20, abi: erc20Abi, functionName: "balanceOf", args: [account.address],
   })) as bigint;
@@ -103,7 +148,7 @@ async function main(): Promise<void> {
 
   // 2. Baseline: 3 successful swaps, then let a REAL poll snapshot low contention.
   const expected0 = (await client.readContract({
-    address: amm, abi: mockAmmAbi, functionName: "getExpectedOutput", args: [SWAP_INPUT_AMOUNT, true],
+    address: amm, abi: ammAbi, functionName: "getExpectedOutput", args: [SWAP_INPUT_AMOUNT, true],
   })) as bigint;
   const safeMin = (expected0 * 90n) / 100n; // 10% slippage buffer → succeeds
   const baseData = encodeSwap(safeMin);
@@ -127,8 +172,8 @@ async function main(): Promise<void> {
     await sleep(1_000);
   }
   console.log(`[${ts()}] baseline contention visible on-chain = ${contentionBaseline.toFixed(3)} — waiting for a real poll to snapshot it…`);
-  const lastChecked = (db.prepare("SELECT last_checked FROM watchlist WHERE contract_address = ?").get(amm) as { last_checked: string | null }).last_checked;
-  const after = await waitForPollChange(db, amm, lastChecked);
+  const lastChecked = await getLastChecked(amm, db);
+  const after = await waitForPollChange(amm, lastChecked, db);
   console.log(`[${ts()}] poll captured baseline at last_checked=${after}`);
 
   // 3. Burst: 20 successful swaps, near-parallel with explicit nonces → land between two polls.
@@ -158,22 +203,20 @@ async function main(): Promise<void> {
   // 4. Wait for the NEXT real poll to raise contention_spike.
   console.log(`[${ts()}] waiting for the next REAL poll cycle to raise contention_spike…`);
   const spikeDeadline = Date.now() + 40_000;
-  let spike: { id: string; type: string; severity: string; message: string; created_at: string } | undefined;
+  let spike: SpikeAlert | undefined;
   while (Date.now() < spikeDeadline) {
-    spike = db
-      .prepare("SELECT id, type, severity, message, created_at FROM alerts WHERE contract_address = ? AND type = 'contention_spike' ORDER BY created_at DESC LIMIT 1")
-      .get(amm) as typeof spike | undefined;
+    spike = await findSpikeAlert(amm, db);
     if (spike) break;
     await sleep(1_000);
   }
   if (!spike) {
     console.error(`[${ts()}] ✗ NO contention_spike alert appeared (baseline=${contentionBaseline.toFixed(3)}, after=${contentionNow.toFixed(3)})`);
-    db.close();
+    db?.close();
     return;
   }
   console.log(`[${ts()}] ✓ contention_spike alert: id=${spike.id.slice(0, 8)} severity=${spike.severity} created=${spike.created_at}`);
   console.log(`[${ts()}]   message="${spike.message}"`);
-  db.close();
+  db?.close();
 }
 
 main().catch((e) => { console.error(e); process.exit(1); });

@@ -97,6 +97,27 @@ export type EvaluateResponse = {
   entryId: string | null;
 };
 
+/**
+ * Fresh verdict for an already-evaluated entry, produced by the backend's
+ * background recheck. A partial Forecast: the fields the recheck re-computed.
+ * The frontend merges these over the original response — it never recomputes
+ * drift or risk itself.
+ */
+export type RecheckResult = {
+  entryId: string;
+  recheckedAt: number;
+  forecast: {
+    outputDriftPercent: number | null;
+    flags: ForecastFlag[];
+    riskLevel: RiskLevel;
+    contentionScore: number | null;
+    simulationSuccess: boolean;
+    revertReason: string | null;
+    simulatedOutput: string | null;
+  };
+  policy: { action: PolicyAction; reason: string };
+};
+
 export type UserAction = "SIGNED" | "CANCELLED" | "OVERRIDDEN";
 export type TxOutcome = "CONFIRMED" | "FAILED" | "DROPPED" | "STUCK";
 

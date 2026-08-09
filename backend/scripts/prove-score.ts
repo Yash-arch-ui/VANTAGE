@@ -3,13 +3,13 @@
 //   1. Build a real clean history for MockClaim — five real /api/evaluate calls
 //      (claim slot 0..4, all unclaimed on-chain) → 5 clean PROCEED ledger rows.
 //   2. GET /api/score/MockClaim  → a clean, well-sampled contract → 100.
-//   3. GET /api/score/MockAMM    → the contract flagged with an active critical
+//   3. GET /api/score/AMM    → the contract flagged with an active critical
 //      failure_surge alert (prior audit) + warning + info alerts + 7/8 failed
 //      evaluations in 24h → visibly lower score, breakdown explains why.
 //   4. Also shows the score embedded in the /api/evaluate response.
 //
 // Requires the backend running on :4000 with the REAL vantage.db (the prior
-// audit's MockAMM data is what the flagged half of the contrast reads).
+// audit's AMM data is what the flagged half of the contrast reads).
 //   cd backend && node_modules/.bin/tsx scripts/prove-score.ts
 import "./_env.js";
 import {
@@ -22,7 +22,7 @@ import {
 import { privateKeyToAccount } from "viem/accounts";
 import { monadTestnet } from "viem/chains";
 import { config } from "../src/config.js";
-import { MOCK_CLAIM_ADDRESS, MOCK_AMM_ADDRESS, mockClaimAbi } from "../src/psg/forecast.js";
+import { MOCK_CLAIM_ADDRESS, AMM_ADDRESS, mockClaimAbi } from "../src/psg/forecast.js";
 
 const BASE_URL = "http://localhost:4000";
 const ts = () => new Date().toISOString();
@@ -39,13 +39,13 @@ async function main(): Promise<void> {
   const account = privateKeyToAccount(`0x${privateKey}`);
   const client = createPublicClient({ chain: monadTestnet, transport: http(rpcUrl) });
   const claim = MOCK_CLAIM_ADDRESS as Address;
-  const amm = MOCK_AMM_ADDRESS as Address;
+  const amm = AMM_ADDRESS as Address;
 
   console.log("══════════════════════════════════════════════════════════════");
   console.log("  VANTAGE SCORE LIVE PROOF — real ledger + alerts + chain");
   console.log("══════════════════════════════════════════════════════════════");
   console.log(`  clean  contract = MockClaim ${claim}`);
-  console.log(`  flagged contract = MockAMM  ${amm}`);
+  console.log(`  flagged contract = AMM  ${amm}`);
 
   // ── 1. Build a real clean history on MockClaim (5 real evaluations) ─────
   console.log(`\n[${ts()}] building clean history: 5 real /api/evaluate calls (claim slot 0..4)…`);
@@ -75,7 +75,7 @@ async function main(): Promise<void> {
   console.log(`[${ts()}] → ${JSON.stringify(clean, null, 2)}`);
 
   // ── 3. Score the flagged contract ──────────────────────────────────────
-  console.log(`\n[${ts()}] GET /api/score/MockAMM (active critical failure_surge + 7/8 failed evals)…`);
+  console.log(`\n[${ts()}] GET /api/score/AMM (active critical failure_surge + 7/8 failed evals)…`);
   const flagged = (await (await fetch(`${BASE_URL}/api/score/${amm}`)).json()) as ScoreBody;
   console.log(`[${ts()}] → ${JSON.stringify(flagged, null, 2)}`);
 

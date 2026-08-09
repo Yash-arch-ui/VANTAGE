@@ -2,16 +2,23 @@ import { useCallback, useState } from "react";
 import { encodeFunctionData, maxUint256, parseEther, type Address, type Hex } from "viem";
 import { useAccount, usePublicClient } from "wagmi";
 import {
-  MOCK_AMM_ADDRESS,
+  AMM_ADDRESS,
   MOCK_CLAIM_ADDRESS,
   MOCK_ERC20_ADDRESS,
   erc20Abi,
-  mockAmmAbi,
+  ammAbi,
   mockClaimAbi,
 } from "../config/contracts";
 import type { EvaluateRequest } from "../lib/api";
 
 export type PresetId = "swap" | "claim" | "approve";
+
+/**
+ * Which side of the pool a swap spends. "token" sells DEMO for MON
+ * (inputIsToken=true, no msg.value); "mon" sells MON for DEMO
+ * (inputIsToken=false, msg.value is the input — the AMM ignores inputAmount).
+ */
+export type SwapDirection = "token" | "mon";
 
 export type Preset = {
   id: PresetId;
@@ -27,12 +34,13 @@ export type Preset = {
 export const PRESETS: Preset[] = [
   {
     id: "swap",
-    label: "Swap on MockAMM",
+    label: "Swap on AMM",
     demonstrates: "Output drift and contention — the price you were quoted vs the price you get",
-    target: MOCK_AMM_ADDRESS,
+    target: AMM_ADDRESS,
     inputLabel: "Input amount (tokens)",
     defaultInput: "1",
   },
+
   {
     id: "claim",
     label: "Claim a slot",
@@ -77,7 +85,11 @@ export function useTxBuilder() {
   const [isBuilding, setIsBuilding] = useState(false);
 
   const build = useCallback(
-    async (preset: Preset, rawInput: string): Promise<BuiltTx> => {
+    async (
+      preset: Preset,
+      rawInput: string,
+      swapDirection: SwapDirection = "token",
+    ): Promise<BuiltTx> => {
       if (!address) throw new Error("Connect a wallet first.");
       if (!publicClient) throw new Error("No RPC client available.");
 
@@ -96,9 +108,14 @@ export function useTxBuilder() {
         let data: Hex;
         let quotedOutput: string | undefined;
         let summary: string;
+        // msg.value for the swap: 0 for token→MON, the input amount (wei) for
+        // MON→token — the AMM reads its input from msg.value in that direction.
+        let value: string = "0";
 
         switch (preset.id) {
           case "swap": {
+            const inputIsToken = swapDirection === "token";
+
             // Validate before parsing. parseEther throws viem's own
             // "Cannot convert 1,5 to a BigInt", which went straight to a toast —
             // a decimal comma is a reasonable thing for someone to type.
@@ -110,23 +127,28 @@ export function useTxBuilder() {
 
             // Live quote from the pool — this is the number the user is
             // effectively being shown, and what drift is measured against.
+            // inputIsToken picks the input reserve (tokenReserve vs monReserve),
+            // so the same field quotes either direction of the swap.
             const expected = (await publicClient.readContract({
-              address: MOCK_AMM_ADDRESS,
-              abi: mockAmmAbi,
+              address: AMM_ADDRESS,
+              abi: ammAbi,
               functionName: "getExpectedOutput",
-              args: [inputAmount, true],
+              args: [inputAmount, inputIsToken],
             })) as bigint;
 
             quotedOutput = expected.toString();
             data = encodeFunctionData({
-              abi: mockAmmAbi,
+              abi: ammAbi,
               functionName: "swap",
               // minOutput 0 deliberately: the point is to let the swap execute
               // and let Vantage catch a bad price, not to have the AMM's own
               // slippage guard revert it first.
-              args: [0n, true, inputAmount],
+              args: [0n, inputIsToken, inputIsToken ? inputAmount : 0n],
             });
-            summary = `Swap ${rawInput} tokens on MockAMM`;
+            value = inputIsToken ? "0" : inputAmount.toString();
+            summary = inputIsToken
+              ? `Swap ${rawInput} tokens for MON on AMM`
+              : `Swap ${rawInput} MON for tokens on AMM`;
             break;
           }
 
@@ -150,9 +172,9 @@ export function useTxBuilder() {
             data = encodeFunctionData({
               abi: erc20Abi,
               functionName: "approve",
-              args: [MOCK_AMM_ADDRESS, maxUint256],
+              args: [AMM_ADDRESS, maxUint256],
             });
-            summary = "Approve MockAMM for an unlimited token allowance";
+            summary = "Approve AMM for an unlimited token allowance";
             break;
           }
         }
@@ -163,7 +185,7 @@ export function useTxBuilder() {
               from: address,
               to: preset.target,
               data,
-              value: "0",
+              value,
               nonce,
             },
             quotedOutput,

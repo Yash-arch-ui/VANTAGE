@@ -19,7 +19,7 @@ const { rpcUrl } = config;
 
 let _publicClient: ReturnType<typeof createPublicClient> | null = null;
 
-function getPublicClient(): ReturnType<typeof createPublicClient> | null {
+export function getPublicClient(): ReturnType<typeof createPublicClient> | null {
   if (_publicClient) return _publicClient;
   if (!rpcUrl) return null;
   try {
@@ -75,10 +75,10 @@ function loadDeployments(): Record<string, string> {
 
 const deployments = loadDeployments();
 
-export const MOCK_AMM_ADDRESS = (deployments.MockAMM || "") as Address;
+export const AMM_ADDRESS = (deployments.AMM || "") as Address;
 export const MOCK_CLAIM_ADDRESS = (deployments.MockClaim || "") as Address;
 
-export const mockAmmAbi = parseAbi([
+export const ammAbi = parseAbi([
   "error InsufficientOutputAmount(uint256 expected, uint256 actual)",
   "error InvalidLiquidityAmounts()",
   "error Unauthorized()",
@@ -108,7 +108,7 @@ const erc20ApproveAbi = parseAbi([
 ]);
 
 export const KNOWN_CONTRACTS = new Map<Address, { abi: readonly unknown[]; name: string }>([
-  [MOCK_AMM_ADDRESS, { abi: mockAmmAbi, name: "MockAMM" }],
+  [AMM_ADDRESS, { abi: ammAbi, name: "AMM" }],
   [MOCK_CLAIM_ADDRESS, { abi: mockClaimAbi, name: "MockClaim" }],
 ]);
 
@@ -385,13 +385,18 @@ export async function getForecast(
         if (decoded.functionName === "swap") {
           const swapArgs = decoded.args as readonly [bigint, boolean, bigint];
           const [, inputIsToken, inputAmount] = swapArgs;
+          // A MON→token swap ignores inputAmount and spends msg.value instead,
+          // so the drift comparison must quote against the same number the swap
+          // actually moves — otherwise every MON swap decodes as input 0 and
+          // reads as a constant −100% drift.
+          const swapInput = inputIsToken ? inputAmount : tx.value;
           const expectedSim = await simulateContract(
             client,
             {
               address: tx.to,
-              abi: mockAmmAbi,
+              abi: ammAbi,
               functionName: "getExpectedOutput",
-              args: [inputAmount, inputIsToken],
+              args: [swapInput, inputIsToken],
               account: tx.from,
             } as unknown as Parameters<typeof simulateContract>[1]
           );

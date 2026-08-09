@@ -23,7 +23,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
  */
 const ASSETS = [
   ["src/em/schema.sql", "dist/em/schema.sql"],
-  // KNOWN_CONTRACTS (MockAMM/MockClaim) is keyed from deployments.json. If it
+  // KNOWN_CONTRACTS (AMM/MockClaim) is keyed from deployments.json. If it
   // never reaches dist/, the guard loses every known contract and degrades to
   // the generic (historically buggy) call path.
   [["../contracts/deployments.json", "deployments.json"], "dist/deployments.json"],

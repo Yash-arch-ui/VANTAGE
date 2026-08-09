@@ -13,9 +13,9 @@ import { privateKeyToAccount } from "viem/accounts";
 import { monadTestnet } from "viem/chains";
 import { config } from "../src/config.js";
 import {
-  MOCK_AMM_ADDRESS,
+  AMM_ADDRESS,
   MOCK_CLAIM_ADDRESS,
-  mockAmmAbi,
+  ammAbi,
   mockClaimAbi,
   getContentionScore,
 } from "../src/psg/forecast.js";
@@ -37,7 +37,7 @@ import {
 
 const API = "http://localhost:4000/api/evaluate";
 const ERC20 = "0x4832448eC5578b84c7b13E3EeBA2370Ccfbd5579" as Address;
-const AMM = MOCK_AMM_ADDRESS as Address;
+const AMM = AMM_ADDRESS as Address;
 const CLAIM = MOCK_CLAIM_ADDRESS as Address;
 
 const erc20Abi = parseAbi([
@@ -48,7 +48,7 @@ const erc20Abi = parseAbi([
 ]);
 
 const swapData = (minOutput: bigint, inputAmount = 1n * 10n ** 18n): Hex =>
-  encodeFunctionData({ abi: mockAmmAbi, functionName: "swap", args: [minOutput, true, inputAmount] });
+  encodeFunctionData({ abi: ammAbi, functionName: "swap", args: [minOutput, true, inputAmount] });
 const claimData = (slot: bigint): Hex =>
   encodeFunctionData({ abi: mockClaimAbi, functionName: "claim", args: [slot] });
 const approveData = (amount: bigint): Hex =>
@@ -156,7 +156,7 @@ async function main(): Promise<void> {
   const quote = async (amount = 1n * 10n ** 18n) =>
     (await publicClient.readContract({
       address: AMM,
-      abi: mockAmmAbi,
+      abi: ammAbi,
       functionName: "getExpectedOutput",
       args: [amount, true],
     })) as bigint;
@@ -242,12 +242,12 @@ async function main(): Promise<void> {
     args: [account.address, AMM],
   })) as bigint;
   if (allowance < 2n * 10n ** 18n) {
-    console.log("  topping up MockAMM allowance…");
+    console.log("  topping up AMM allowance…");
     await sendRaw(ERC20, approveData(maxUint256), 200_000n);
   }
   console.log(`  token balance=${balance.toString()}`);
 
-  // ── S1. Swap on MockAMM — clean ─────────────────────────────────────────
+  // ── S1. Swap on AMM — clean ─────────────────────────────────────────
   console.log("\n── S1 Swap clean ──────────────────────────────────────────────");
   try {
     const q = await quote();
@@ -303,19 +303,19 @@ async function main(): Promise<void> {
   try {
     const [t, m] = (await publicClient.readContract({
       address: AMM,
-      abi: mockAmmAbi,
+      abi: ammAbi,
       functionName: "getReserves",
     })) as [bigint, bigint];
     const oldQuote = await quote();
     await sendRaw(
       AMM,
-      encodeFunctionData({ abi: mockAmmAbi, functionName: "manipulateReserves", args: [(t * 112n) / 100n, m] }),
+      encodeFunctionData({ abi: ammAbi, functionName: "manipulateReserves", args: [(t * 112n) / 100n, m] }),
       200_000n,
     );
     const r = await evaluateTx({ to: AMM, data: swapData(0n), nonce: await pendingNonce(), quotedOutput: oldQuote });
     await sendRaw(
       AMM,
-      encodeFunctionData({ abi: mockAmmAbi, functionName: "manipulateReserves", args: [t, m] }),
+      encodeFunctionData({ abi: ammAbi, functionName: "manipulateReserves", args: [t, m] }),
       200_000n,
     ); // restore
     record(

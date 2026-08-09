@@ -6,7 +6,7 @@ import { ScoreBackground } from "../components/backgrounds/ScoreBackground";
 import { useScore } from "../hooks/api";
 import { scoreTone, toneClasses } from "../lib/risk";
 import { shortAddress } from "../lib/format";
-import { MOCK_AMM_ADDRESS, MOCK_CLAIM_ADDRESS } from "../config/contracts";
+import { AMM_ADDRESS, MOCK_CLAIM_ADDRESS } from "../config/contracts";
 
 export const Route = createFileRoute("/score")({
   component: ScorePage,
@@ -58,12 +58,12 @@ const PENALTIES = [
 
 function ScorePage() {
   const { address: connected } = useAccount();
-  const [address, setAddress] = useState<string>(MOCK_AMM_ADDRESS);
+  const [address, setAddress] = useState<string>(AMM_ADDRESS);
   const valid = ADDRESS_RE.test(address);
   const { data, isLoading } = useScore(valid ? address : undefined);
 
   const quickLinks = [
-    { label: "MockAMM", value: MOCK_AMM_ADDRESS },
+    { label: "AMM", value: AMM_ADDRESS },
     { label: "MockClaim", value: MOCK_CLAIM_ADDRESS },
     ...(connected ? [{ label: "My wallet", value: connected }] : []),
   ];

@@ -14,6 +14,7 @@ import type {
   EvaluateResponse,
   LedgerEntry,
   OutcomeRequest,
+  RecheckResult,
   ScoreResult,
   SessionStats,
   TxStatusReport,
@@ -25,6 +26,13 @@ import type {
 const ALERT_POLL_MS = 10_000;
 const STATS_POLL_MS = 15_000;
 const TX_POLL_MS = 2_000;
+/**
+ * Background recheck cadence. A drift is only visible after the pool actually
+ * moves, so polling faster than ~10s just burns requests — but the verdict must
+ * still catch up well before a human reads it, and the backend recheck itself
+ * takes a full simulation + log scan per request.
+ */
+const RECHECK_POLL_MS = 10_000;
 
 export const queryKeys = {
   stats: ["stats"] as const,
@@ -39,6 +47,7 @@ export const queryKeys = {
   // values must not share one cache entry.
   txStatus: (txHash: string | undefined, submittedAt: number | undefined) =>
     ["tx-status", txHash, submittedAt] as const,
+  recheck: (entryId: string | undefined) => ["recheck", entryId] as const,
 };
 
 // ── Reads ──────────────────────────────────────────────────────────────
@@ -118,6 +127,27 @@ export function useTxStatus(txHash: string | undefined, submittedAt: number | un
       // open and its outcome was never recorded at all.
       return TERMINAL_STATUSES.has(status) ? false : TX_POLL_MS;
     },
+  });
+}
+
+/**
+ * Poll the backend's re-verification of an evaluated entry while the verdict is
+ * still on screen. The backend does ALL the work — fresh simulation, drift
+ * math, risk decision — and this hook just fetches the latest verdict and hands
+ * it to app.tsx to merge. The frontend never computes drift or risk itself.
+ *
+ * `entryId` is undefined (disabled) once the user signs, cancels, or edits the
+ * transaction — polling stops when the evaluation is no longer the live one.
+ */
+export function useVerdictRecheck(entryId: string | undefined) {
+  return useQuery<RecheckResult, api.ApiError>({
+    queryKey: queryKeys.recheck(entryId),
+    queryFn: ({ signal }) => api.recheckEvaluation(entryId!, signal),
+    enabled: Boolean(entryId),
+    refetchInterval: RECHECK_POLL_MS,
+    // Keep the previous verdict visible while a recheck is in flight, so the
+    // panel doesn't flicker to empty every 10 seconds.
+    placeholderData: (prev) => prev,
   });
 }
 

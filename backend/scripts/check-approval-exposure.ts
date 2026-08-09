@@ -8,7 +8,7 @@ const privateKey = process.env.PRIVATE_KEY;
 if (!privateKey) throw new Error('PRIVATE_KEY is not set — copy .env.example to .env');
 const account = privateKeyToAccount(`0x${privateKey.replace(/^0x/, '')}`);
 const MOCK_ERC20 = '0x4832448eC5578b84c7b13E3EeBA2370Ccfbd5579' as `0x${string}`;
-const MOCK_AMM = '0x7567C23BE5CB52F3B270562180776A95f1bbCa8e' as `0x${string}`;
+const AMM = '0x7567C23BE5CB52F3B270562180776A95f1bbCa8e' as `0x${string}`;
 
 const client = createPublicClient({ chain: monadTestnet, transport: http(rpcUrl) });
 const wallet = createWalletClient({ chain: monadTestnet, transport: http(rpcUrl), account });
@@ -23,26 +23,26 @@ async function main() {
   const balance = await client.readContract({ address: MOCK_ERC20, abi: erc20Abi, functionName: 'balanceOf', args: [account.address] });
   console.log('Token balance:', balance.toString());
 
-  const currentAllowance = await client.readContract({ address: MOCK_ERC20, abi: erc20Abi, functionName: 'allowance', args: [account.address, MOCK_AMM] });
-  console.log('Current allowance for MockAMM:', currentAllowance.toString());
+  const currentAllowance = await client.readContract({ address: MOCK_ERC20, abi: erc20Abi, functionName: 'allowance', args: [account.address, AMM] });
+  console.log('Current allowance for AMM:', currentAllowance.toString());
 
   if (currentAllowance > 0n) {
     console.log('Already has allowance, resetting to 0 first...');
     const resetTx = await wallet.writeContract({
       address: MOCK_ERC20, abi: erc20Abi, functionName: 'approve',
-      args: [MOCK_AMM, 0n], gas: 50000n,
+      args: [AMM, 0n], gas: 50000n,
     });
     await client.waitForTransactionReceipt({ hash: resetTx, timeout: 120000 });
     console.log('Allowance reset to 0');
   }
 
-  // Approve MockAMM for 50% of balance (ratio >= 0.5 triggers warning)
+  // Approve AMM for 50% of balance (ratio >= 0.5 triggers warning)
   const approveAmount = (balance * 50n) / 100n;
-  console.log('Approving MockAMM for', approveAmount.toString(), 'tokens (50% of balance)');
+  console.log('Approving AMM for', approveAmount.toString(), 'tokens (50% of balance)');
 
   const approveTx = await wallet.writeContract({
     address: MOCK_ERC20, abi: erc20Abi, functionName: 'approve',
-    args: [MOCK_AMM, approveAmount], gas: 50000n,
+    args: [AMM, approveAmount], gas: 50000n,
   });
   console.log('Approve tx:', approveTx);
   const receipt = await client.waitForTransactionReceipt({ hash: approveTx, timeout: 120000 });

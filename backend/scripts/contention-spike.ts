@@ -13,8 +13,8 @@ const AMM = '0x7567C23BE5CB52F3B270562180776A95f1bbCa8e' as `0x${string}`;
 const client = createPublicClient({ chain: monadTestnet, transport: http(rpcUrl) });
 const wallet = createWalletClient({ chain: monadTestnet, transport: http(rpcUrl), account });
 
-const mockAmmAbi = parseAbi(['function swap(uint256 minOutput, bool inputIsToken, uint256 inputAmount) payable']);
-const swapData = encodeFunctionData({ abi: mockAmmAbi, functionName: 'swap', args: [0n, true, 1000000000000000000n] });
+const ammAbi = parseAbi(['function swap(uint256 minOutput, bool inputIsToken, uint256 inputAmount) payable']);
+const swapData = encodeFunctionData({ abi: ammAbi, functionName: 'swap', args: [0n, true, 1000000000000000000n] });
 
 async function main() {
   const baseline = await getContentionScore(AMM);

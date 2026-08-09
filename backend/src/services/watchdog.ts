@@ -19,7 +19,7 @@ import { privateKeyToAccount } from "viem/accounts";
 import { monadTestnet } from "viem/chains";
 import { config } from "../config.js";
 import {
-  mockAmmAbi,
+  ammAbi,
   getContentionScore,
   getRecentActivity,
 } from "../psg/forecast.js";
@@ -131,7 +131,7 @@ async function readReserves(client: Client, address: Address): Promise<Reserves 
   try {
     const [tokenReserve, monReserve] = (await client.readContract({
       address,
-      abi: mockAmmAbi,
+      abi: ammAbi,
       functionName: "getReserves",
     })) as [bigint, bigint];
     return { tokenReserve, monReserve };
@@ -160,7 +160,7 @@ async function checkApprovalExposure(
   try {
     const token = (await client.readContract({
       address: contract,
-      abi: mockAmmAbi,
+      abi: ammAbi,
       functionName: "token",
     })) as Address;
     const [balance, allowance] = await Promise.all([

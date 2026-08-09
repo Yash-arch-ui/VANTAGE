@@ -62,6 +62,29 @@ export function VerdictPanel({ result }: { result: EvaluateResponse }) {
         <p className="mt-2 text-sm text-[color:var(--caution)]">{policy.suggestedAdjustment}</p>
       )}
 
+      {/* State drift — only when the backend flagged the quote as stale. The
+          three values come straight from the evaluate response, never recomputed. */}
+      {forecast.flags.includes("STALE_STATE") && (
+        <div className="mt-4 rounded-xl border border-[color:var(--caution)]/30 bg-[color:var(--caution)]/10 p-4">
+          <div className="flex flex-wrap items-start gap-x-8 gap-y-3">
+            <div>
+              <p className="tabular text-[10px] uppercase tracking-[0.2em] text-text-secondary">State Drift</p>
+              <p className="tabular mt-1 text-xl font-medium text-[color:var(--caution)]">
+                {formatPercent(forecast.outputDriftPercent)}
+              </p>
+            </div>
+            <div>
+              <p className="tabular text-[10px] uppercase tracking-[0.2em] text-text-secondary">Status</p>
+              <p className="tabular mt-1 text-xl font-medium text-[color:var(--caution)]">STALE_STATE</p>
+            </div>
+            <div>
+              <p className="tabular text-[10px] uppercase tracking-[0.2em] text-text-secondary">Decision</p>
+              <p className="tabular mt-1 text-xl font-medium text-[color:var(--caution)]">{policy.action}</p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* The one AI component in the system — labelled, because "6 of 7 are
           deterministic" is a claim worth making visible rather than asserting. */}
       <div className="mt-5 rounded-xl border border-white/[0.06] bg-white/[0.02] p-4">

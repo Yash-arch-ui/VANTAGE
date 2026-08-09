@@ -32,7 +32,7 @@ describe("PoolReserves", () => {
 
     render(<PoolReserves />);
 
-    // shortAddress of MOCK_AMM_ADDRESS from contracts/deployments.json.
+    // shortAddress of AMM_ADDRESS from contracts/deployments.json.
     expect(screen.getByText("0x7567…Ca8e")).toBeInTheDocument();
   });
 

@@ -3,11 +3,11 @@ pragma solidity ^0.8.24;
 
 import {Test} from "../lib/forge-std/src/Test.sol";
 import "../src/MockERC20.sol";
-import "../src/MockAMM.sol";
+import "../src/AMM.sol";
 
-contract MockAMMTest is Test {
+contract AMMTest is Test {
     MockERC20 public token;
-    MockAMM public amm;
+    AMM public amm;
     address public owner;
     address public trader;
     address public otherTrader;
@@ -26,7 +26,7 @@ contract MockAMMTest is Test {
 
         vm.startPrank(owner);
         token = new MockERC20("Demo Token", "DEMO", 18);
-        amm = new MockAMM(address(token));
+        amm = new AMM(address(token));
         vm.stopPrank();
 
         vm.startPrank(owner);
@@ -202,10 +202,10 @@ contract MockAMMTest is Test {
 }
 
 contract ReentrancyAttacker {
-    MockAMM public amm;
+    AMM public amm;
     bool public attemptedReentry;
 
-    constructor(MockAMM _amm) {
+    constructor(AMM _amm) {
         amm = _amm;
     }
 
@@ -242,7 +242,7 @@ contract ReentrancyAttacker {
         bool inputIsToken,
         uint256 minOutput
     ) external payable {
-        MockAMM(amm).swap(minOutput, inputIsToken, inputAmount);
+        AMM(amm).swap(minOutput, inputIsToken, inputAmount);
     }
 
     fallback() external payable {}

@@ -68,10 +68,10 @@ async function main(): Promise<void> {
 
   const { config } = await import("../src/config.js");
   const { app } = await import("../src/server.js"); // runs initDatabase(prove-ledger.db)
-  const { MOCK_AMM_ADDRESS, mockAmmAbi } = await import("../src/psg/forecast.js");
+  const { AMM_ADDRESS, ammAbi } = await import("../src/psg/forecast.js");
 
   const account = privateKeyToAccount(`0x${config.privateKey}`);
-  const amm = MOCK_AMM_ADDRESS as Address;
+  const amm = AMM_ADDRESS as Address;
   const client = createPublicClient({ chain: monadTestnet, transport: http(config.rpcUrl) });
 
   const server = app.listen(0);
@@ -99,7 +99,7 @@ async function main(): Promise<void> {
   const nonce = await client.getTransactionCount({ address: account.address, blockTag: "pending" });
   const expected = await client.readContract({
     address: amm,
-    abi: mockAmmAbi,
+    abi: ammAbi,
     functionName: "getExpectedOutput",
     args: [SWAP_INPUT_AMOUNT, true],
   });
@@ -108,7 +108,7 @@ async function main(): Promise<void> {
     from: account.address,
     to: amm,
     data: encodeFunctionData({
-      abi: mockAmmAbi,
+      abi: ammAbi,
       functionName: "swap",
       args: [minOutput, true, SWAP_INPUT_AMOUNT],
     }),
@@ -138,7 +138,7 @@ async function main(): Promise<void> {
 
   console.log("\n  Scenario C — second ABORT variant (minOutput=100x).");
   console.log("    A HOLD_AND_RECHECK path can't be forced right now: contention must be");
-  console.log("    elevated over a 180s window of real MockAMM activity, which is not the");
+  console.log("    elevated over a 180s window of real AMM activity, which is not the");
   console.log("    case at proof time — so per the spec this falls back to an ABORT variant.");
   const s3 = await post(api("/evaluate"), { tx: buildTx(expected * 100n) });
   const p3 = s3.body.policy as { action: string };

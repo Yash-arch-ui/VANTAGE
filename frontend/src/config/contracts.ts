@@ -6,16 +6,16 @@ import deployments from "../../../contracts/deployments.json";
  * artifact so the UI can never drift from what was actually deployed.
  */
 export const MOCK_ERC20_ADDRESS = deployments.MockERC20 as Address;
-export const MOCK_AMM_ADDRESS = deployments.MockAMM as Address;
+export const AMM_ADDRESS = deployments.AMM as Address;
 export const MOCK_CLAIM_ADDRESS = deployments.MockClaim as Address;
 
 /**
  * Kept as parseAbi string arrays, mirroring backend/src/psg/forecast.ts, so the
  * two sides stay diffable by eye. The backend only decodes simulations for
- * MockAMM and MockClaim — anything else falls back to a raw eth_call — so
+ * AMM and MockClaim — anything else falls back to a raw eth_call — so
  * these are the contracts the demo builds transactions against.
  */
-export const mockAmmAbi = parseAbi([
+export const ammAbi = parseAbi([
   "error InsufficientOutputAmount(uint256 expected, uint256 actual)",
   "error InvalidLiquidityAmounts()",
   "error Unauthorized()",

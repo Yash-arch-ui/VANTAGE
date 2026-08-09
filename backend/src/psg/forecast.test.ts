@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { toFunctionSelector, getAbiItem } from "viem";
 import {
   decodeRevertReason,
-  mockAmmAbi,
+  ammAbi,
   mockClaimAbi,
   checkValidity,
   getContentionScore,
@@ -26,8 +26,8 @@ function abiErrorSelector(abi: readonly unknown[], name: string): string {
 }
 
 // Pre-compute selectors that match the source code's constants
-const SEL_INSUFFICIENT_OUTPUT = abiErrorSelector(mockAmmAbi, "InsufficientOutputAmount");
-const SEL_REENTRANCY = abiErrorSelector(mockAmmAbi, "ReentrancyDetected");
+const SEL_INSUFFICIENT_OUTPUT = abiErrorSelector(ammAbi, "InsufficientOutputAmount");
+const SEL_REENTRANCY = abiErrorSelector(ammAbi, "ReentrancyDetected");
 const SEL_SLOT_CLAIMED = abiErrorSelector(mockClaimAbi, "SlotAlreadyClaimed");
 const SEL_INVALID_SLOT = abiErrorSelector(mockClaimAbi, "InvalidSlot");
 
@@ -189,9 +189,9 @@ describe("decodeRevertReason — viem error chain walking", () => {
 // ── ABI selector verification ──────────────────────────────────────────
 
 describe("decodeRevertReason — ABI selector verification", () => {
-  it("MockAMM ABI error[0] selector matches InsufficientOutputAmount", () => {
-    const abiItem = mockAmmAbi[0];
-    console.log(`  mockAmmAbi[0]: ${JSON.stringify(abiItem)}`);
+  it("AMM ABI error[0] selector matches InsufficientOutputAmount", () => {
+    const abiItem = ammAbi[0];
+    console.log(`  ammAbi[0]: ${JSON.stringify(abiItem)}`);
     assert.ok(abiItem.type === "error", "Should be an error ABI item");
   });
 

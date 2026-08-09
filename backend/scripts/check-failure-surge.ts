@@ -21,7 +21,7 @@ import {
 import { privateKeyToAccount } from "viem/accounts";
 import { monadTestnet } from "viem/chains";
 import { config } from "../src/config.js";
-import { MOCK_AMM_ADDRESS, mockAmmAbi } from "../src/psg/forecast.js";
+import { AMM_ADDRESS, ammAbi } from "../src/psg/forecast.js";
 
 const BASE_URL = "http://localhost:4000";
 const SWAP_INPUT_AMOUNT = 1n * 10n ** 17n; // 0.1 token per swap
@@ -40,7 +40,7 @@ async function nextNonce(
 
 function encodeSwap(minOutput: bigint): Hex {
   return encodeFunctionData({
-    abi: mockAmmAbi,
+    abi: ammAbi,
     functionName: "swap",
     args: [minOutput, true, SWAP_INPUT_AMOUNT],
   });
@@ -50,8 +50,8 @@ async function main(): Promise<void> {
   const { privateKey, rpcUrl } = config;
   if (!privateKey) throw new Error("PRIVATE_KEY not set");
   const account = privateKeyToAccount(`0x${privateKey}`);
-  const amm = MOCK_AMM_ADDRESS as Address;
-  if (!amm) throw new Error("MockAMM address missing");
+  const amm = AMM_ADDRESS as Address;
+  if (!amm) throw new Error("AMM address missing");
 
   const client = createPublicClient({ chain: monadTestnet, transport: http(rpcUrl) });
   const wallet = createWalletClient({ chain: monadTestnet, transport: http(rpcUrl), account });
@@ -67,7 +67,7 @@ async function main(): Promise<void> {
   console.log(`[${ts()}] MockERC20 balance = ${balance.toString()}`);
 
   const expected = (await client.readContract({
-    address: amm, abi: mockAmmAbi, functionName: "getExpectedOutput", args: [SWAP_INPUT_AMOUNT, true],
+    address: amm, abi: ammAbi, functionName: "getExpectedOutput", args: [SWAP_INPUT_AMOUNT, true],
   })) as bigint;
   const minOutput = expected * 10n; // 10x → guaranteed InsufficientOutputAmount revert
   const data = encodeSwap(minOutput);

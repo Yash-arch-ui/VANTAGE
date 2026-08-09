@@ -11,6 +11,7 @@ import type {
   LedgerEntry,
   OutcomeRequest,
   OutcomeResponse,
+  RecheckResult,
   ScoreResult,
   SessionStats,
   TxStatusReport,
@@ -47,6 +48,24 @@ export function evaluate(req: EvaluateRequest, signal?: AbortSignal): Promise<Ev
 /** Report what the user did and what happened. Recalibrates the contract's threshold. */
 export function reportOutcome(req: OutcomeRequest): Promise<OutcomeResponse> {
   return apiFetch("/api/outcome", { method: "POST", ...json(req) });
+}
+
+/**
+ * Re-verify an evaluated transaction against fresh chain state. The backend
+ * re-runs the same forecast/drift/decision pipeline with the entry's original
+ * quoted output and returns the fresh verdict — no drift math happens here.
+ * Slightly generous timeout: the backend performs a full simulation + log scan.
+ */
+export function recheckEvaluation(
+  entryId: string,
+  signal?: AbortSignal,
+): Promise<RecheckResult> {
+  return apiFetch("/api/recheck", {
+    method: "POST",
+    ...json({ entryId }),
+    timeoutMs: 15_000,
+    signal,
+  });
 }
 
 export function getStats(signal?: AbortSignal): Promise<SessionStats> {

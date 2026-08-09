@@ -8,7 +8,7 @@ error InvalidLiquidityAmounts();
 error Unauthorized();
 error ReentrancyDetected();
 
-contract MockAMM {
+contract AMM {
     address public token;
     uint256 public tokenReserve;
     uint256 public monReserve;

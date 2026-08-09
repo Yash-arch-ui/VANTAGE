@@ -12,8 +12,8 @@ const AMM = '0x7567C23BE5CB52F3B270562180776A95f1bbCa8e' as `0x${string}`;
 const client = createPublicClient({ chain: monadTestnet, transport: http(rpcUrl) });
 const wallet = createWalletClient({ chain: monadTestnet, transport: http(rpcUrl), account });
 
-const mockAmmAbi = parseAbi(['function swap(uint256 minOutput, bool inputIsToken, uint256 inputAmount) payable']);
-const swapData = encodeFunctionData({ abi: mockAmmAbi, functionName: 'swap', args: [0n, true, 1000000000000000000n] });
+const ammAbi = parseAbi(['function swap(uint256 minOutput, bool inputIsToken, uint256 inputAmount) payable']);
+const swapData = encodeFunctionData({ abi: ammAbi, functionName: 'swap', args: [0n, true, 1000000000000000000n] });
 
 async function main() {
   // Step 1: Fire a successful on-chain swap to establish a clean baseline
@@ -25,7 +25,7 @@ async function main() {
   const receipt = await client.waitForTransactionReceipt({ hash, timeout: 120000 });
   console.log('Tx status:', receipt.status);
 
-  // Step 2: Call POST /evaluate with a clean swap against MockAMM
+  // Step 2: Call POST /evaluate with a clean swap against AMM
   // Use a fresh nonce so the tx is valid
   const freshNonce = await client.getTransactionCount({ address: account.address, blockTag: 'pending' });
   console.log('Fresh nonce for evaluate:', freshNonce);

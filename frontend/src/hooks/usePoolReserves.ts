@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { usePublicClient } from "wagmi";
-import { MOCK_AMM_ADDRESS, mockAmmAbi } from "../config/contracts";
+import { AMM_ADDRESS, ammAbi } from "../config/contracts";
 
 export type PoolReserves = {
   tokenReserve: bigint;
@@ -8,7 +8,7 @@ export type PoolReserves = {
 };
 
 /**
- * Live MockAMM reserves, read straight off the chain (getReserves) rather than
+ * Live AMM reserves, read straight off the chain (getReserves) rather than
  * through the backend. This matches the two patterns already in the codebase:
  * useTxBuilder does the same direct readContract via usePublicClient for its
  * quote, and the query layer polls at a fixed cadence for anything live.
@@ -20,12 +20,12 @@ const RESERVES_POLL_MS = 10_000;
 export function usePoolReserves() {
   const publicClient = usePublicClient();
   return useQuery<PoolReserves>({
-    queryKey: ["pool-reserves", MOCK_AMM_ADDRESS],
+    queryKey: ["pool-reserves", AMM_ADDRESS],
     queryFn: async () => {
       if (!publicClient) throw new Error("No RPC client available.");
       const [tokenReserve, monReserve] = (await publicClient.readContract({
-        address: MOCK_AMM_ADDRESS,
-        abi: mockAmmAbi,
+        address: AMM_ADDRESS,
+        abi: ammAbi,
         functionName: "getReserves",
       })) as [bigint, bigint];
       return { tokenReserve, monReserve };
