@@ -68,18 +68,28 @@ export function VerdictPanel({ result }: { result: EvaluateResponse }) {
         <div className="mt-4 rounded-xl border border-[color:var(--caution)]/30 bg-[color:var(--caution)]/10 p-4">
           <div className="flex flex-wrap items-start gap-x-8 gap-y-3">
             <div>
-              <p className="tabular text-[10px] uppercase tracking-[0.2em] text-text-secondary">State Drift</p>
+              <p className="tabular text-[10px] uppercase tracking-[0.2em] text-text-secondary">
+                State Drift
+              </p>
               <p className="tabular mt-1 text-xl font-medium text-[color:var(--caution)]">
                 {formatPercent(forecast.outputDriftPercent)}
               </p>
             </div>
             <div>
-              <p className="tabular text-[10px] uppercase tracking-[0.2em] text-text-secondary">Status</p>
-              <p className="tabular mt-1 text-xl font-medium text-[color:var(--caution)]">STALE_STATE</p>
+              <p className="tabular text-[10px] uppercase tracking-[0.2em] text-text-secondary">
+                Status
+              </p>
+              <p className="tabular mt-1 text-xl font-medium text-[color:var(--caution)]">
+                STALE_STATE
+              </p>
             </div>
             <div>
-              <p className="tabular text-[10px] uppercase tracking-[0.2em] text-text-secondary">Decision</p>
-              <p className="tabular mt-1 text-xl font-medium text-[color:var(--caution)]">{policy.action}</p>
+              <p className="tabular text-[10px] uppercase tracking-[0.2em] text-text-secondary">
+                Decision
+              </p>
+              <p className="tabular mt-1 text-xl font-medium text-[color:var(--caution)]">
+                {policy.action}
+              </p>
             </div>
           </div>
         </div>

@@ -80,7 +80,7 @@ function GuardConsole() {
   // without re-evaluating. Stopped as soon as the user signs, cancels, or edits
   // the transaction (which resets result → entryId becomes undefined).
   const recheckEntryId =
-    result && !txHash && !userAction ? result.entryId ?? undefined : undefined;
+    result && !txHash && !userAction ? (result.entryId ?? undefined) : undefined;
   const { data: recheckData } = useVerdictRecheck(recheckEntryId);
 
   // Merge the backend's fresh verdict over the original response. The recheck

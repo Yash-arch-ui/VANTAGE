@@ -56,10 +56,7 @@ export function reportOutcome(req: OutcomeRequest): Promise<OutcomeResponse> {
  * quoted output and returns the fresh verdict — no drift math happens here.
  * Slightly generous timeout: the backend performs a full simulation + log scan.
  */
-export function recheckEvaluation(
-  entryId: string,
-  signal?: AbortSignal,
-): Promise<RecheckResult> {
+export function recheckEvaluation(entryId: string, signal?: AbortSignal): Promise<RecheckResult> {
   return apiFetch("/api/recheck", {
     method: "POST",
     ...json({ entryId }),
