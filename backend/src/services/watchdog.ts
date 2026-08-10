@@ -203,10 +203,16 @@ export function compareSnapshots(
   ) {
     const d = driftPct(previous.tokenReserve, current.tokenReserve);
     if (Math.abs(d) > RESERVE_DRIFT_THRESHOLD_PCT) {
+      // The alert is about the MAGNITUDE of the reserve move (both the 5%/10%
+      // thresholds and the severity are computed on |d|), so the message shows
+      // the drift unsigned — direction is readable from the reserves arrow. The
+      // stored driftPct keeps its SIGN so the UI can colour it (red = reserve
+      // decreased, blue = reserve increased) while displaying the magnitude.
+      const magnitude = Math.abs(d);
       alerts.push({
         type: "reserve_drift",
-        severity: Math.abs(d) >= RESERVE_DRIFT_CRITICAL_PCT ? "critical" : "warning",
-        message: `Reserves moved ${d.toFixed(2)}% (token reserve ${previous.tokenReserve} → ${current.tokenReserve})`,
+        severity: magnitude >= RESERVE_DRIFT_CRITICAL_PCT ? "critical" : "warning",
+        message: `Reserves moved ${magnitude.toFixed(2)}% (token reserve ${previous.tokenReserve} → ${current.tokenReserve})`,
         driftPct: Math.round(d * 100) / 100,
       });
     }

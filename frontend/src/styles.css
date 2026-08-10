@@ -60,6 +60,12 @@
   --caution: #f59e0b;
   --danger: #ef4444;
 
+  /* Directional drift in the monitor: reserve decrease (negative) vs increase
+     (positive). Kept outside the verdict triad because sign is not risk — a
+     big movement is alert-worthy in either direction. */
+  --drift-negative: var(--danger);
+  --drift-positive: #60a5fa;
+
   --card: #0e0e11;
   --card-foreground: #f3f4f6;
   --popover: #0e0e11;

@@ -231,9 +231,17 @@ function Monitor() {
                   <p className="mt-2 text-sm text-white/90">{alert.message}</p>
 
                   {alert.driftPct !== null && (
-                    <p className={`tabular mt-1 text-xs ${t.text}`}>
-                      Drift {alert.driftPct > 0 ? "+" : ""}
-                      {alert.driftPct.toFixed(2)}%
+                    <p
+                      className={`tabular mt-1 text-xs ${
+                        alert.driftPct < 0
+                          ? "text-[color:var(--drift-negative)]"
+                          : "text-[color:var(--drift-positive)]"
+                      }`}
+                    >
+                      {/* Drift is displayed unsigned — it measures the magnitude
+                          of the reserve move. The colour carries the direction:
+                          red = reserve decreased, blue = reserve increased. */}
+                      Drift {Math.abs(alert.driftPct).toFixed(2)}%
                     </p>
                   )}
 
