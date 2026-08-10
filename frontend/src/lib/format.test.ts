@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { formatToken, formatPercent, formatGas, shortAddress, relativeTime } from "./format";
+import { formatToken, formatPercent, formatDriftPercent, formatGas, shortAddress, relativeTime } from "./format";
 import { actionTone, riskTone, watchTone, scoreTone, actionLabel, watchStatusLabel } from "./risk";
 import type { PolicyAction, RiskLevel, TxWatchStatus } from "./api";
 
@@ -28,6 +28,16 @@ describe("format — null is a normal answer, not a crash", () => {
     expect(formatPercent(8.333)).toBe("+8.33%");
     expect(formatPercent(-8.333)).toBe("-8.33%");
     expect(formatPercent(NaN)).toBe("—");
+  });
+
+  it("renders drift unsigned — the colour carries the direction", () => {
+    // Signed values from the backend must render as a clean magnitude so the
+    // red/blue colouring is the only signal for direction.
+    expect(formatDriftPercent(10.5)).toBe("10.50%");
+    expect(formatDriftPercent(-22.67)).toBe("22.67%");
+    expect(formatDriftPercent(0)).toBe("0.00%");
+    expect(formatDriftPercent(null)).toBe("—");
+    expect(formatDriftPercent(NaN)).toBe("—");
   });
 
   it("shortens addresses without mangling short strings", () => {

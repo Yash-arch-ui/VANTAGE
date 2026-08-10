@@ -9,22 +9,25 @@ import {
   scoreTone,
   toneClasses,
 } from "../../lib/risk";
-import { formatGas, formatPercent, formatToken } from "../../lib/format";
+import { formatDriftPercent, formatGas, formatToken } from "../../lib/format";
 import { apexSpring } from "../../lib/motion";
 
 function Field({
   label,
   value,
   tone = "neutral",
+  textClass,
 }: {
   label: string;
   value: string;
   tone?: keyof typeof toneClasses;
+  /** Overrides the tone colour when direction carries the meaning (e.g. drift). */
+  textClass?: string;
 }) {
   return (
     <div className="border-t border-white/[0.06] py-3">
       <p className="tabular text-[10px] uppercase tracking-[0.2em] text-text-secondary">{label}</p>
-      <p className={`tabular mt-1 text-sm ${toneClasses[tone].text}`}>{value}</p>
+      <p className={`tabular mt-1 text-sm ${textClass ?? toneClasses[tone].text}`}>{value}</p>
     </div>
   );
 }
@@ -71,8 +74,18 @@ export function VerdictPanel({ result }: { result: EvaluateResponse }) {
               <p className="tabular text-[10px] uppercase tracking-[0.2em] text-text-secondary">
                 State Drift
               </p>
-              <p className="tabular mt-1 text-xl font-medium text-[color:var(--caution)]">
-                {formatPercent(forecast.outputDriftPercent)}
+              {/* Drift value is unsigned; red = decreased, blue = increased.
+                  Null stays neutral — same rule as the Drift field below. */}
+              <p
+                className={`tabular mt-1 text-xl font-medium ${
+                  forecast.outputDriftPercent === null
+                    ? "text-text-secondary"
+                    : forecast.outputDriftPercent < 0
+                      ? "text-[color:var(--drift-negative)]"
+                      : "text-[color:var(--drift-positive)]"
+                }`}
+              >
+                {formatDriftPercent(forecast.outputDriftPercent)}
               </p>
             </div>
             <div>
@@ -130,13 +143,13 @@ export function VerdictPanel({ result }: { result: EvaluateResponse }) {
         />
         <Field
           label="Drift"
-          value={formatPercent(forecast.outputDriftPercent)}
-          tone={
+          value={formatDriftPercent(forecast.outputDriftPercent)}
+          textClass={
             forecast.outputDriftPercent === null
-              ? "neutral"
-              : Math.abs(forecast.outputDriftPercent) > 1
-                ? "caution"
-                : "safe"
+              ? undefined
+              : forecast.outputDriftPercent < 0
+                ? "text-[color:var(--drift-negative)]"
+                : "text-[color:var(--drift-positive)]"
           }
         />
         <Field
