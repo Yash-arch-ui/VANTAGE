@@ -88,23 +88,39 @@ export function decidePolicy(forecast: PSGForecast): PolicyResult {
   }
 
   if (riskLevel === "HIGH") {
+    // Safety failures (invalid nonce / insufficient balance) are absolute and
+    // take precedence over every other condition at this risk level: an
+    // invalid nonce must never be downgraded to HOLD_AND_RECHECK merely
+    // because HIGH_CONTENTION is also present — holding cannot fix a nonce
+    // that is stale or gapped, and the hold path could even time out into
+    // SUGGEST_ADJUSTMENT for a transaction that can never mine.
+    if (flags.includes("NONCE_GAP") || flags.includes("NONCE_STALE") || flags.includes("LOW_BALANCE")) {
+      const issue = flags.includes("NONCE_GAP") ? "nonce gap" :
+                    flags.includes("NONCE_STALE") ? "stale nonce" :
+                    "insufficient balance";
+      return { action: "ABORT", reason: `Unsafe to submit: ${issue}.` };
+    }
+    // Genuine network contention — the only HIGH condition that legitimately
+    // warrants waiting and re-checking.
     if (flags.includes("HIGH_CONTENTION")) {
       return {
         action: "HOLD_AND_RECHECK",
         reason: `Contention score ${forecast.contentionScore?.toFixed(2) ?? "N/A"} exceeds threshold. Pausing for recheck.`,
       };
     }
+    // STALE_STATE is deliberately WARN, not HOLD_AND_RECHECK. The hold loop is
+    // for conditions that resolve by waiting (contention settles); a stale
+    // quote is a fixed reference vs. the current pool price, so waiting cannot
+    // fix it — and the hold timeout's "try increasing gas" advice would be
+    // actively wrong for a price move. The live /recheck verdict surfaces the
+    // drift without spawning a server-side wait, so WARN stays the actionable
+    // state. Contention still outranks it (checked above), preserving the
+    // existing HOLD behavior when both are present.
     if (flags.includes("STALE_STATE")) {
       const drift = outputDriftPercent !== null
         ? `drift ${outputDriftPercent.toFixed(2)}%`
         : "unexpected drift";
       return { action: "WARN", reason: `Stale state detected (${drift}). Proceed with caution.` };
-    }
-    if (flags.includes("NONCE_GAP") || flags.includes("NONCE_STALE") || flags.includes("LOW_BALANCE")) {
-      const issue = flags.includes("NONCE_GAP") ? "nonce gap" :
-                    flags.includes("NONCE_STALE") ? "stale nonce" :
-                    "insufficient balance";
-      return { action: "ABORT", reason: `Unsafe to submit: ${issue}.` };
     }
     // Safe fallback for any other HIGH case not explicitly covered
     return { action: "WARN", reason: `Unhandled HIGH risk. Flags: ${flags.join(", ")}.` };

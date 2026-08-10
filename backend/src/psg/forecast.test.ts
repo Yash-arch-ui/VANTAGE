@@ -6,6 +6,7 @@ import {
   ammAbi,
   claimContractAbi,
   checkValidity,
+  computeDriftPercent,
   getContentionScore,
   getPSGForecast,
   contentionWindowFromBlock,
@@ -244,6 +245,44 @@ describe("getForecast — unit behavior (no live chain)", () => {
     console.log(`  getForecast (no quotedOutput): quotedOutput=${forecast.quotedOutput}, outputDriftPercent=${forecast.outputDriftPercent}`);
     assert.equal(forecast.quotedOutput, null);
     assert.equal(forecast.outputDriftPercent, null);
+  });
+});
+
+// ── computeDriftPercent — the drift math behind STALE_STATE ────────────
+//
+// The formula every stale-state verdict rests on: drift is measured against
+// the quote the user was shown (the ORIGINAL quote for a recheck), so a pool
+// move registers as a real percentage instead of being re-baselined away.
+
+describe("computeDriftPercent — (simulated - quoted) / quoted * 100", () => {
+  it("quoted 100, simulated 92 → -8 (negative = price moved against the user)", () => {
+    assert.equal(computeDriftPercent(92n, 100n), -8);
+  });
+
+  it("quoted 100, simulated 108 → +8 (price moved in the user's favour)", () => {
+    assert.equal(computeDriftPercent(108n, 100n), 8);
+  });
+
+  it("quoted 100, simulated 100 → 0 (no drift → no STALE_STATE)", () => {
+    assert.equal(computeDriftPercent(100n, 100n), 0);
+  });
+
+  it("quoted 1000, simulated 923 → -7.7", () => {
+    assert.equal(computeDriftPercent(923n, 1000n), -7.7);
+  });
+
+  it("is measured against the caller's quote — the ORIGINAL, not a refreshed one", () => {
+    // Pool moved 8% against the user relative to the ORIGINAL quote of 100.
+    // Re-baselining against a freshly re-quoted 96 would mask the move.
+    assert.equal(computeDriftPercent(92n, 100n), -8);
+    // BigInt division truncates toward zero: -40000 / 96 = -416 → -4.16.
+    assert.equal(computeDriftPercent(92n, 96n), -4.16);
+  });
+
+  it("works at wei-scale magnitudes", () => {
+    const quoted = 1_000_000_000_000_000_000n; // 1 token
+    const simulated = (quoted * 95n) / 100n; // 5% less
+    assert.equal(computeDriftPercent(simulated, quoted), -5);
   });
 });
 

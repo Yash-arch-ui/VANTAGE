@@ -307,6 +307,22 @@ async function safeCall(
   }
 }
 
+// ── Drift math ────────────────────────────────────────────────────────
+
+/**
+ * Signed percentage drift between what the chain currently returns and the
+ * quote the user was shown: (simulated - quoted) / quoted * 100.
+ *
+ * Measured against the caller's `quoted` — for a background recheck that is
+ * the ORIGINAL quote persisted on the ledger entry, never a freshly re-quoted
+ * price, so a pool move shows up as a real number instead of being
+ * re-baselined away. One formula, shared by the known-contract and generic
+ * simulation paths.
+ */
+export function computeDriftPercent(simulated: bigint, quoted: bigint): number {
+  return Number(((simulated - quoted) * 10_000n) / quoted) / 100;
+}
+
 // ── Simulation forecast (existing, with quotedOutput fix) ──────────────
 
 export async function getForecast(
@@ -404,8 +420,7 @@ export async function getForecast(
           if (expectedOut !== undefined) {
             simulatedOutput = expectedOut.toString();
             if (quotedOutput !== undefined && quotedOutput !== 0n) {
-              const drift = Number((((expectedOut - quotedOutput) * 10000n) / quotedOutput));
-              outputDriftPercent = drift / 100;
+              outputDriftPercent = computeDriftPercent(expectedOut, quotedOutput);
             }
           }
         } else if (resultValue !== undefined) {
@@ -454,8 +469,7 @@ export async function getForecast(
           simulatedOutput = decodedOutput.toString();
 
           if (quotedOutput !== 0n) {
-            const drift = Number((((decodedOutput - quotedOutput) * 10000n) / quotedOutput));
-            outputDriftPercent = drift / 100;
+            outputDriftPercent = computeDriftPercent(decodedOutput, quotedOutput);
           }
         }
       } catch {

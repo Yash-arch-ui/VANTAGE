@@ -98,6 +98,81 @@ describe("decidePolicy — HIGH", () => {
   });
 });
 
+// ── Nonce safety precedence ───────────────────────────────────────────
+//
+// An invalid nonce is a hard safety failure and must ABORT regardless of
+// concurrent network contention. Regression: HIGH_CONTENTION used to be
+// checked first in the HIGH branch, downgrading a stale/gapped nonce to
+// HOLD_AND_RECHECK (and potentially into SUGGEST_ADJUSTMENT via the hold
+// timeout) for a transaction that can never mine.
+
+describe("decidePolicy — nonce safety precedence (nonce > contention)", () => {
+  it("NONCE_STALE alone → ABORT", () => {
+    const r = decidePolicy(base({ riskLevel: "HIGH", flags: ["NONCE_STALE"] }));
+    assert.equal(r.action, "ABORT");
+    assert.ok(r.reason.includes("stale nonce"));
+  });
+
+  it("NONCE_GAP alone → ABORT", () => {
+    const r = decidePolicy(base({ riskLevel: "HIGH", flags: ["NONCE_GAP"] }));
+    assert.equal(r.action, "ABORT");
+    assert.ok(r.reason.includes("nonce gap"));
+  });
+
+  it("HIGH_CONTENTION alone → HOLD_AND_RECHECK", () => {
+    const r = decidePolicy(base({ riskLevel: "HIGH", flags: ["HIGH_CONTENTION"], contentionScore: 0.85 }));
+    assert.equal(r.action, "HOLD_AND_RECHECK");
+    assert.ok(r.reason.includes("0.85"));
+  });
+
+  it("NONCE_STALE + HIGH_CONTENTION → ABORT (never downgraded to a hold)", () => {
+    const r = decidePolicy(base({
+      riskLevel: "HIGH",
+      flags: ["NONCE_STALE", "HIGH_CONTENTION"],
+      contentionScore: 0.9,
+    }));
+    assert.equal(r.action, "ABORT");
+    assert.ok(r.reason.includes("stale nonce"));
+  });
+
+  it("NONCE_GAP + HIGH_CONTENTION → ABORT (never downgraded to a hold)", () => {
+    const r = decidePolicy(base({
+      riskLevel: "HIGH",
+      flags: ["NONCE_GAP", "HIGH_CONTENTION"],
+      contentionScore: 0.9,
+    }));
+    assert.equal(r.action, "ABORT");
+    assert.ok(r.reason.includes("nonce gap"));
+  });
+
+  it("LOW_BALANCE + HIGH_CONTENTION → ABORT (same safety bucket)", () => {
+    const r = decidePolicy(base({
+      riskLevel: "HIGH",
+      flags: ["LOW_BALANCE", "HIGH_CONTENTION"],
+      contentionScore: 0.9,
+    }));
+    assert.equal(r.action, "ABORT");
+    assert.ok(r.reason.includes("balance"));
+  });
+
+  it("STALE_STATE + HIGH_CONTENTION → HOLD_AND_RECHECK (contention still outranks drift)", () => {
+    // Stale drift is a WARN condition, so genuine contention must still hold —
+    // preserving the existing contention HOLD behavior when both are present.
+    const r = decidePolicy(base({
+      riskLevel: "HIGH",
+      flags: ["STALE_STATE", "HIGH_CONTENTION"],
+      contentionScore: 0.85,
+      outputDriftPercent: -8.5,
+    }));
+    assert.equal(r.action, "HOLD_AND_RECHECK");
+  });
+
+  it("clean transaction → PROCEED", () => {
+    const r = decidePolicy(base({ riskLevel: "LOW", flags: [] }));
+    assert.equal(r.action, "PROCEED");
+  });
+});
+
 describe("decidePolicy — CRITICAL", () => {
   it("CRITICAL + REVERT → ABORT with revertReason", () => {
     const r = decidePolicy(base({ riskLevel: "CRITICAL", flags: ["REVERT"], revertReason: "InsufficientOutputAmount(expected=100, actual=88)" }));
