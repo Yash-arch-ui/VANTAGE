@@ -9,6 +9,62 @@ import type { AlertSeverity, ForecastFlag, PolicyAction, RiskLevel, TxWatchStatu
 
 export type Tone = "safe" | "caution" | "danger" | "neutral";
 
+/**
+ * Direction read straight off a signed drift value. The backend computes
+ * drift as (simulated − quoted) / quoted and the frontend only interprets the
+ * sign: negative is worse than the quote, positive is better, zero matches.
+ * The value is always the backend's number — never recomputed here.
+ */
+export type DriftDirection = "negative" | "positive" | "zero" | "unknown";
+
+export function driftDirection(value: number | null | undefined): DriftDirection {
+  if (value === null || value === undefined || !Number.isFinite(value)) return "unknown";
+  if (value < 0) return "negative";
+  if (value > 0) return "positive";
+  return "zero";
+}
+
+/**
+ * Drift-specific presentation, kept separate from toneClasses' safe/caution/
+ * danger triad because drift has its own two-direction palette: red = output
+ * worse than quoted, blue = output better than quoted, zero reads neutral.
+ * The same map is used by the drift card and the compact Drift field, so the
+ * two can never disagree about a direction.
+ */
+export const driftToneClasses: Record<
+  DriftDirection,
+  { text: string; border: string; bg: string; caption: string }
+> = {
+  negative: {
+    text: "text-[color:var(--drift-negative)]",
+    border: "border-[color:var(--drift-negative)]/30",
+    bg: "bg-[color:var(--drift-negative)]/10",
+    caption: "Worse than quoted",
+  },
+  positive: {
+    text: "text-[color:var(--drift-positive)]",
+    border: "border-[color:var(--drift-positive)]/30",
+    bg: "bg-[color:var(--drift-positive)]/10",
+    caption: "Better than quoted",
+  },
+  zero: {
+    text: "text-text-secondary",
+    border: "border-white/10",
+    bg: "bg-white/[0.03]",
+    caption: "Matches the quote",
+  },
+  // Defensive completeness: the drift card renders only for non-null drift and
+  // the compact field maps null to an unstyled dash, so this branch is never
+  // reached in the UI — it exists so driftDirection() stays total for callers
+  // that have not yet guarded against null.
+  unknown: {
+    text: "text-text-secondary",
+    border: "border-white/10",
+    bg: "bg-white/[0.03]",
+    caption: "Drift unavailable",
+  },
+};
+
 export const toneClasses: Record<Tone, { text: string; border: string; bg: string; dot: string }> =
   {
     safe: {

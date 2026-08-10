@@ -7,7 +7,15 @@ import {
   shortAddress,
   relativeTime,
 } from "./format";
-import { actionTone, riskTone, watchTone, scoreTone, actionLabel, watchStatusLabel } from "./risk";
+import {
+  actionTone,
+  riskTone,
+  watchTone,
+  scoreTone,
+  actionLabel,
+  watchStatusLabel,
+  driftDirection,
+} from "./risk";
 import type { PolicyAction, RiskLevel, TxWatchStatus } from "./api";
 
 describe("format — null is a normal answer, not a crash", () => {
@@ -37,12 +45,13 @@ describe("format — null is a normal answer, not a crash", () => {
     expect(formatPercent(NaN)).toBe("—");
   });
 
-  it("renders drift unsigned — the colour carries the direction", () => {
-    // Signed values from the backend must render as a clean magnitude so the
-    // red/blue colouring is the only signal for direction.
-    expect(formatDriftPercent(10.5)).toBe("10.50%");
-    expect(formatDriftPercent(-22.67)).toBe("22.67%");
+  it("renders drift signed so the direction is in the number itself", () => {
+    // The verdict shows both directions, so the sign is part of the readout
+    // and the red/blue colouring reinforces it rather than carrying it alone.
+    expect(formatDriftPercent(10.5)).toBe("+10.50%");
+    expect(formatDriftPercent(-22.67)).toBe("-22.67%");
     expect(formatDriftPercent(0)).toBe("0.00%");
+    expect(formatDriftPercent(-0)).toBe("0.00%");
     expect(formatDriftPercent(null)).toBe("—");
     expect(formatDriftPercent(NaN)).toBe("—");
   });
@@ -94,5 +103,17 @@ describe("risk — every state maps to a tone and a label", () => {
     expect(scoreTone(60)).toBe("caution");
     expect(scoreTone(10)).toBe("danger");
     expect(scoreTone(0)).toBe("danger");
+  });
+
+  it("reads drift direction straight off the backend's signed value", () => {
+    // Direction is derived only from the number — never from swap direction,
+    // policy, or any frontend recomputation.
+    expect(driftDirection(-10.68)).toBe("negative");
+    expect(driftDirection(8.42)).toBe("positive");
+    expect(driftDirection(0)).toBe("zero");
+    expect(driftDirection(-0)).toBe("zero");
+    expect(driftDirection(null)).toBe("unknown");
+    expect(driftDirection(undefined)).toBe("unknown");
+    expect(driftDirection(NaN)).toBe("unknown");
   });
 });

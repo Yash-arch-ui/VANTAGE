@@ -46,15 +46,12 @@ export function formatPercent(value: number | null | undefined, precision = 2): 
 }
 
 /**
- * Drift magnitude for display. The backend's drift values are signed (negative
- * = reserve/output decreased, positive = increased), but the number reads as a
- * magnitude — the colour conveys the direction (red = negative, blue =
- * positive) so the sign never clutters the value.
+ * Drift for display, sign included (negative = worse than quoted, positive =
+ * better than quoted). Deliberately shares formatPercent's signed rendering so
+ * the drift readout and any other signed percentage can never disagree about
+ * how the sign is displayed.
  */
-export function formatDriftPercent(value: number | null | undefined, precision = 2): string {
-  if (value === null || value === undefined || !Number.isFinite(value)) return "—";
-  return `${Math.abs(value).toFixed(precision)}%`;
-}
+export const formatDriftPercent = formatPercent;
 
 export function formatNumber(value: number | null | undefined): string {
   if (value === null || value === undefined || !Number.isFinite(value)) return "—";

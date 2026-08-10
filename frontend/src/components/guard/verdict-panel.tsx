@@ -4,6 +4,8 @@ import type { EvaluateResponse } from "../../lib/api";
 import {
   actionLabel,
   actionTone,
+  driftDirection,
+  driftToneClasses,
   flagDescription,
   riskTone,
   scoreTone,
@@ -36,6 +38,12 @@ export function VerdictPanel({ result }: { result: EvaluateResponse }) {
   const { forecast, policy, explanation } = result;
   const tone = actionTone(policy.action);
   const t = toneClasses[tone];
+  // Direction is read straight off the backend's signed drift number — never
+  // recomputed. Both swap directions (token→MON and MON→token) reach this as
+  // the same signed value, so no direction is hardcoded here.
+  const drift = forecast.outputDriftPercent;
+  const driftTone = driftToneClasses[driftDirection(drift)];
+  const isStale = forecast.flags.includes("STALE_STATE");
 
   return (
     <motion.section
@@ -65,44 +73,40 @@ export function VerdictPanel({ result }: { result: EvaluateResponse }) {
         <p className="mt-2 text-sm text-[color:var(--caution)]">{policy.suggestedAdjustment}</p>
       )}
 
-      {/* State drift — only when the backend flagged the quote as stale. The
-          three values come straight from the evaluate response, never recomputed. */}
-      {forecast.flags.includes("STALE_STATE") && (
-        <div className="mt-4 rounded-xl border border-[color:var(--caution)]/30 bg-[color:var(--caution)]/10 p-4">
-          <div className="flex flex-wrap items-start gap-x-8 gap-y-3">
-            <div>
+      {/* State drift — shown for BOTH directions whenever the backend reports a
+          drift (outputDriftPercent !== null), so a positive drift reads as
+          clearly as a negative one. Direction and colour come straight from the
+          backend's signed number; when a /api/recheck merges a new value into
+          the result, this card simply re-renders with it. */}
+      {drift !== null && (
+        <div className={`mt-4 rounded-xl border p-4 ${driftTone.border} ${driftTone.bg}`}>
+          <div className="flex flex-wrap items-start gap-x-10 gap-y-4">
+            <div className="min-w-44">
               <p className="tabular text-[10px] uppercase tracking-[0.2em] text-text-secondary">
-                State Drift
+                State drift
               </p>
-              {/* Drift value is unsigned; red = decreased, blue = increased.
-                  Null stays neutral — same rule as the Drift field below. */}
+              <p className={`tabular mt-1 text-2xl font-semibold tracking-tight ${driftTone.text}`}>
+                {formatDriftPercent(drift)}
+              </p>
               <p
-                className={`tabular mt-1 text-xl font-medium ${
-                  forecast.outputDriftPercent === null
-                    ? "text-text-secondary"
-                    : forecast.outputDriftPercent < 0
-                      ? "text-[color:var(--drift-negative)]"
-                      : "text-[color:var(--drift-positive)]"
-                }`}
+                className={`tabular mt-1 text-[10px] uppercase tracking-[0.18em] ${driftTone.text}`}
               >
-                {formatDriftPercent(forecast.outputDriftPercent)}
+                {driftTone.caption}
               </p>
             </div>
             <div>
               <p className="tabular text-[10px] uppercase tracking-[0.2em] text-text-secondary">
                 Status
               </p>
-              <p className="tabular mt-1 text-xl font-medium text-[color:var(--caution)]">
-                STALE_STATE
+              <p className={`tabular mt-1 text-xl font-medium ${driftTone.text}`}>
+                {isStale ? "STALE_STATE" : "Current"}
               </p>
             </div>
             <div>
               <p className="tabular text-[10px] uppercase tracking-[0.2em] text-text-secondary">
                 Decision
               </p>
-              <p className="tabular mt-1 text-xl font-medium text-[color:var(--caution)]">
-                {policy.action}
-              </p>
+              <p className={`tabular mt-1 text-xl font-medium ${t.text}`}>{policy.action}</p>
             </div>
           </div>
         </div>
@@ -143,14 +147,8 @@ export function VerdictPanel({ result }: { result: EvaluateResponse }) {
         />
         <Field
           label="Drift"
-          value={formatDriftPercent(forecast.outputDriftPercent)}
-          textClass={
-            forecast.outputDriftPercent === null
-              ? undefined
-              : forecast.outputDriftPercent < 0
-                ? "text-[color:var(--drift-negative)]"
-                : "text-[color:var(--drift-positive)]"
-          }
+          value={formatDriftPercent(drift)}
+          textClass={drift === null ? undefined : driftTone.text}
         />
         <Field
           label="Simulation"
