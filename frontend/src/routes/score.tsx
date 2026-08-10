@@ -6,7 +6,7 @@ import { ScoreBackground } from "../components/backgrounds/ScoreBackground";
 import { useScore } from "../hooks/api";
 import { scoreTone, toneClasses } from "../lib/risk";
 import { shortAddress } from "../lib/format";
-import { AMM_ADDRESS, MOCK_CLAIM_ADDRESS } from "../config/contracts";
+import { AMM_ADDRESS, CLAIM_CONTRACT_ADDRESS } from "../config/contracts";
 
 export const Route = createFileRoute("/score")({
   component: ScorePage,
@@ -64,7 +64,7 @@ function ScorePage() {
 
   const quickLinks = [
     { label: "AMM", value: AMM_ADDRESS },
-    { label: "MockClaim", value: MOCK_CLAIM_ADDRESS },
+    { label: "ClaimContract", value: CLAIM_CONTRACT_ADDRESS },
     ...(connected ? [{ label: "My wallet", value: connected }] : []),
   ];
 

@@ -1,8 +1,8 @@
 // Live proof of the Vantage Score against the running backend + real chain.
 //
-//   1. Build a real clean history for MockClaim — five real /api/evaluate calls
-//      (claim slot 0..4, all unclaimed on-chain) → 5 clean PROCEED ledger rows.
-//   2. GET /api/score/MockClaim  → a clean, well-sampled contract → 100.
+//   1. Build a real clean history for ClaimContract — five real /api/evaluate
+//      calls (claim slot 0..4, all unclaimed on-chain) → 5 clean PROCEED rows.
+//   2. GET /api/score/ClaimContract  → a clean, well-sampled contract → 100.
 //   3. GET /api/score/AMM    → the contract flagged with an active critical
 //      failure_surge alert (prior audit) + warning + info alerts + 7/8 failed
 //      evaluations in 24h → visibly lower score, breakdown explains why.
@@ -22,7 +22,7 @@ import {
 import { privateKeyToAccount } from "viem/accounts";
 import { monadTestnet } from "viem/chains";
 import { config } from "../src/config.js";
-import { MOCK_CLAIM_ADDRESS, AMM_ADDRESS, mockClaimAbi } from "../src/psg/forecast.js";
+import { CLAIM_CONTRACT_ADDRESS, AMM_ADDRESS, claimContractAbi } from "../src/psg/forecast.js";
 
 const BASE_URL = "http://localhost:4000";
 const ts = () => new Date().toISOString();
@@ -38,20 +38,20 @@ async function main(): Promise<void> {
   const { privateKey, rpcUrl } = config;
   const account = privateKeyToAccount(`0x${privateKey}`);
   const client = createPublicClient({ chain: monadTestnet, transport: http(rpcUrl) });
-  const claim = MOCK_CLAIM_ADDRESS as Address;
+  const claim = CLAIM_CONTRACT_ADDRESS as Address;
   const amm = AMM_ADDRESS as Address;
 
   console.log("══════════════════════════════════════════════════════════════");
   console.log("  VANTAGE SCORE LIVE PROOF — real ledger + alerts + chain");
   console.log("══════════════════════════════════════════════════════════════");
-  console.log(`  clean  contract = MockClaim ${claim}`);
+  console.log(`  clean  contract = ClaimContract ${claim}`);
   console.log(`  flagged contract = AMM  ${amm}`);
 
-  // ── 1. Build a real clean history on MockClaim (5 real evaluations) ─────
+  // ── 1. Build a real clean history on ClaimContract (5 real evaluations) ─
   console.log(`\n[${ts()}] building clean history: 5 real /api/evaluate calls (claim slot 0..4)…`);
   const nonce = await client.getTransactionCount({ address: account.address, blockTag: "pending" });
   for (let i = 0; i < 5; i++) {
-    const data: Hex = encodeFunctionData({ abi: mockClaimAbi, functionName: "claim", args: [BigInt(i)] });
+    const data: Hex = encodeFunctionData({ abi: claimContractAbi, functionName: "claim", args: [BigInt(i)] });
     const res = await fetch(`${BASE_URL}/api/evaluate`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -70,7 +70,7 @@ async function main(): Promise<void> {
   }
 
   // ── 2. Score the clean contract ─────────────────────────────────────────
-  console.log(`\n[${ts()}] GET /api/score/MockClaim (clean history, sampleSize=5)…`);
+  console.log(`\n[${ts()}] GET /api/score/ClaimContract (clean history, sampleSize=5)…`);
   const clean = (await (await fetch(`${BASE_URL}/api/score/${claim}`)).json()) as ScoreBody;
   console.log(`[${ts()}] → ${JSON.stringify(clean, null, 2)}`);
 

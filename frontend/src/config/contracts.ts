@@ -7,12 +7,12 @@ import deployments from "../../../contracts/deployments.json";
  */
 export const MOCK_ERC20_ADDRESS = deployments.MockERC20 as Address;
 export const AMM_ADDRESS = deployments.AMM as Address;
-export const MOCK_CLAIM_ADDRESS = deployments.MockClaim as Address;
+export const CLAIM_CONTRACT_ADDRESS = deployments.ClaimContract as Address;
 
 /**
  * Kept as parseAbi string arrays, mirroring backend/src/psg/forecast.ts, so the
  * two sides stay diffable by eye. The backend only decodes simulations for
- * AMM and MockClaim — anything else falls back to a raw eth_call — so
+ * AMM and ClaimContract — anything else falls back to a raw eth_call — so
  * these are the contracts the demo builds transactions against.
  */
 export const ammAbi = parseAbi([
@@ -27,7 +27,7 @@ export const ammAbi = parseAbi([
   "function token() view returns (address)",
 ]);
 
-export const mockClaimAbi = parseAbi([
+export const claimContractAbi = parseAbi([
   "error SlotAlreadyClaimed(uint256 slotId)",
   "error InvalidSlot()",
   "function claim(uint256 slotId)",

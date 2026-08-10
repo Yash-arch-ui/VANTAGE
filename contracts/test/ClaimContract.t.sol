@@ -2,10 +2,10 @@
 pragma solidity ^0.8.24;
 
 import "forge-std/Test.sol";
-import "../src/MockClaim.sol";
+import "../src/ClaimContract.sol";
 
-contract MockClaimTest is Test {
-    MockClaim public claimContract;
+contract ClaimContractTest is Test {
+    ClaimContract public claimContract;
     address public owner;
     address public claimer;
     address public otherClaimer;
@@ -15,7 +15,7 @@ contract MockClaimTest is Test {
         claimer = makeAddr("claimer");
         otherClaimer = makeAddr("otherClaimer");
 
-        claimContract = new MockClaim();
+        claimContract = new ClaimContract();
     }
 
     function test_claim_succeedsForFreshSlot() public {

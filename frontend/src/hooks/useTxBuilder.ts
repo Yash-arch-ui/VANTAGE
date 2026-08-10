@@ -3,11 +3,11 @@ import { encodeFunctionData, maxUint256, parseEther, type Address, type Hex } fr
 import { useAccount, usePublicClient } from "wagmi";
 import {
   AMM_ADDRESS,
-  MOCK_CLAIM_ADDRESS,
+  CLAIM_CONTRACT_ADDRESS,
   MOCK_ERC20_ADDRESS,
   erc20Abi,
   ammAbi,
-  mockClaimAbi,
+  claimContractAbi,
 } from "../config/contracts";
 import type { EvaluateRequest } from "../lib/api";
 
@@ -45,7 +45,7 @@ export const PRESETS: Preset[] = [
     id: "claim",
     label: "Claim a slot",
     demonstrates: "Stale state — the slot someone else took while you were reading the page",
-    target: MOCK_CLAIM_ADDRESS,
+    target: CLAIM_CONTRACT_ADDRESS,
     inputLabel: "Slot id",
     defaultInput: "1",
   },
@@ -160,11 +160,11 @@ export function useTxBuilder() {
             }
             const slotId = BigInt(rawInput.trim());
             data = encodeFunctionData({
-              abi: mockClaimAbi,
+              abi: claimContractAbi,
               functionName: "claim",
               args: [slotId],
             });
-            summary = `Claim slot ${slotId} on MockClaim`;
+            summary = `Claim slot ${slotId} on ClaimContract`;
             break;
           }
 

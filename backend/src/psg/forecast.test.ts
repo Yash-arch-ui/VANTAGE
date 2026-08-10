@@ -4,7 +4,7 @@ import { toFunctionSelector, getAbiItem } from "viem";
 import {
   decodeRevertReason,
   ammAbi,
-  mockClaimAbi,
+  claimContractAbi,
   checkValidity,
   getContentionScore,
   getPSGForecast,
@@ -28,8 +28,8 @@ function abiErrorSelector(abi: readonly unknown[], name: string): string {
 // Pre-compute selectors that match the source code's constants
 const SEL_INSUFFICIENT_OUTPUT = abiErrorSelector(ammAbi, "InsufficientOutputAmount");
 const SEL_REENTRANCY = abiErrorSelector(ammAbi, "ReentrancyDetected");
-const SEL_SLOT_CLAIMED = abiErrorSelector(mockClaimAbi, "SlotAlreadyClaimed");
-const SEL_INVALID_SLOT = abiErrorSelector(mockClaimAbi, "InvalidSlot");
+const SEL_SLOT_CLAIMED = abiErrorSelector(claimContractAbi, "SlotAlreadyClaimed");
+const SEL_INVALID_SLOT = abiErrorSelector(claimContractAbi, "InvalidSlot");
 
 // ── Custom error decode tests ──────────────────────────────────────────
 
@@ -195,9 +195,9 @@ describe("decodeRevertReason — ABI selector verification", () => {
     assert.ok(abiItem.type === "error", "Should be an error ABI item");
   });
 
-  it("MockClaim ABI error[0] selector matches SlotAlreadyClaimed", () => {
-    const abiItem = mockClaimAbi[0];
-    console.log(`  mockClaimAbi[0]: ${JSON.stringify(abiItem)}`);
+  it("ClaimContract ABI error[0] selector matches SlotAlreadyClaimed", () => {
+    const abiItem = claimContractAbi[0];
+    console.log(`  claimContractAbi[0]: ${JSON.stringify(abiItem)}`);
     assert.ok(abiItem.type === "error", "Should be an error ABI item");
   });
 

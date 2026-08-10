@@ -14,9 +14,9 @@ import { monadTestnet } from "viem/chains";
 import { config } from "../src/config.js";
 import {
   AMM_ADDRESS,
-  MOCK_CLAIM_ADDRESS,
+  CLAIM_CONTRACT_ADDRESS,
   ammAbi,
-  mockClaimAbi,
+  claimContractAbi,
   getContentionScore,
 } from "../src/psg/forecast.js";
 
@@ -38,7 +38,7 @@ import {
 const API = "http://localhost:4000/api/evaluate";
 const ERC20 = "0x4832448eC5578b84c7b13E3EeBA2370Ccfbd5579" as Address;
 const AMM = AMM_ADDRESS as Address;
-const CLAIM = MOCK_CLAIM_ADDRESS as Address;
+const CLAIM = CLAIM_CONTRACT_ADDRESS as Address;
 
 const erc20Abi = parseAbi([
   "function balanceOf(address owner) view returns (uint256)",
@@ -50,7 +50,7 @@ const erc20Abi = parseAbi([
 const swapData = (minOutput: bigint, inputAmount = 1n * 10n ** 18n): Hex =>
   encodeFunctionData({ abi: ammAbi, functionName: "swap", args: [minOutput, true, inputAmount] });
 const claimData = (slot: bigint): Hex =>
-  encodeFunctionData({ abi: mockClaimAbi, functionName: "claim", args: [slot] });
+  encodeFunctionData({ abi: claimContractAbi, functionName: "claim", args: [slot] });
 const approveData = (amount: bigint): Hex =>
   encodeFunctionData({ abi: erc20Abi, functionName: "approve", args: [AMM, amount] });
 
@@ -149,7 +149,7 @@ function isCleanAnnotated(flags: string[]): boolean {
 async function main(): Promise<void> {
   console.log(`sender    = ${account.address}`);
   console.log(`AMM       = ${AMM}`);
-  console.log(`MockClaim = ${CLAIM}`);
+  console.log(`ClaimContract = ${CLAIM}`);
   console.log(`MockERC20 = ${ERC20}`);
   console.log("");
 
@@ -335,7 +335,7 @@ async function main(): Promise<void> {
     for (let i = 0; i < 10; i++) {
       const claimed = (await publicClient.readContract({
         address: CLAIM,
-        abi: mockClaimAbi,
+        abi: claimContractAbi,
         functionName: "isClaimed",
         args: [BigInt(i)],
       })) as boolean;

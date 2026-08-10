@@ -4,7 +4,7 @@
 //
 //   Phase A — 21 guaranteed-REVERT transactions with sequential nonces.
 //             Each one mines as status 0 (failed) and drives block density
-//             on the AMM and MockClaim contracts.
+//             on the AMM and ClaimContract contracts.
 //   Phase B — 10 high-nonce transactions whose nonces leave permanent gaps
 //             (nonce = current + 30 + i*2). They can never be mined until the
 //             gap fills, so they sit in the mempool as "block contention".

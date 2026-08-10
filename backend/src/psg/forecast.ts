@@ -76,7 +76,7 @@ function loadDeployments(): Record<string, string> {
 const deployments = loadDeployments();
 
 export const AMM_ADDRESS = (deployments.AMM || "") as Address;
-export const MOCK_CLAIM_ADDRESS = (deployments.MockClaim || "") as Address;
+export const CLAIM_CONTRACT_ADDRESS = (deployments.ClaimContract || "") as Address;
 
 export const ammAbi = parseAbi([
   "error InsufficientOutputAmount(uint256 expected, uint256 actual)",
@@ -91,7 +91,7 @@ export const ammAbi = parseAbi([
   "function manipulateReserves(uint256 newTokenReserve, uint256 newMonReserve)",
 ]);
 
-export const mockClaimAbi = parseAbi([
+export const claimContractAbi = parseAbi([
   "error SlotAlreadyClaimed(uint256 slotId)",
   "error InvalidSlot()",
   "function claim(uint256 slotId)",
@@ -109,7 +109,7 @@ const erc20ApproveAbi = parseAbi([
 
 export const KNOWN_CONTRACTS = new Map<Address, { abi: readonly unknown[]; name: string }>([
   [AMM_ADDRESS, { abi: ammAbi, name: "AMM" }],
-  [MOCK_CLAIM_ADDRESS, { abi: mockClaimAbi, name: "MockClaim" }],
+  [CLAIM_CONTRACT_ADDRESS, { abi: claimContractAbi, name: "ClaimContract" }],
 ]);
 
 export type VantageTxRequest = {

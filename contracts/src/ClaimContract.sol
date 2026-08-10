@@ -4,7 +4,7 @@ pragma solidity ^0.8.24;
 error SlotAlreadyClaimed(uint256 slotId);
 error InvalidSlot();
 
-contract MockClaim {
+contract ClaimContract {
     mapping(uint256 => address) public claims;
     uint256 public claimedCount;
     uint256 public constant TOTAL_SLOTS = 10;
