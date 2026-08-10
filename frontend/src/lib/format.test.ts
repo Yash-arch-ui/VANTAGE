@@ -1,5 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { formatToken, formatPercent, formatDriftPercent, formatGas, shortAddress, relativeTime } from "./format";
+import {
+  formatToken,
+  formatPercent,
+  formatDriftPercent,
+  formatGas,
+  shortAddress,
+  relativeTime,
+} from "./format";
 import { actionTone, riskTone, watchTone, scoreTone, actionLabel, watchStatusLabel } from "./risk";
 import type { PolicyAction, RiskLevel, TxWatchStatus } from "./api";
 
