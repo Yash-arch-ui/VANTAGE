@@ -108,6 +108,16 @@ export function decidePolicy(forecast: PSGForecast): PolicyResult {
         reason: `Contention score ${forecast.contentionScore?.toFixed(2) ?? "N/A"} exceeds threshold. Pausing for recheck.`,
       };
     }
+    // ECA — high state conflict is the same shape of condition as high
+    // contention: waiting and re-checking is exactly what resolves a crowded
+    // mempool, so it reuses the existing HOLD_AND_RECHECK loop untouched.
+    // Nonce ABORT conditions were checked above, so they keep precedence.
+    if (flags.includes("HIGH_STATE_CONFLICT")) {
+      return {
+        action: "HOLD_AND_RECHECK",
+        reason: `State conflict score ${forecast.conflictScore?.toFixed(2) ?? "N/A"} — competing pending transactions target the same contract or slot. Pausing for recheck.`,
+      };
+    }
     // STALE_STATE is deliberately WARN, not HOLD_AND_RECHECK. The hold loop is
     // for conditions that resolve by waiting (contention settles); a stale
     // quote is a fixed reference vs. the current pool price, so waiting cannot
@@ -628,8 +638,12 @@ function templateExplain(forecast: PSGForecast, policy: PolicyResult): string {
       return `Risk level is ${forecast.riskLevel}.${details} Proceed with caution.`;
     }
 
-    case "HOLD_AND_RECHECK":
+    case "HOLD_AND_RECHECK": {
+      if (forecast.flags.includes("HIGH_STATE_CONFLICT")) {
+        return `Competing pending transactions target the same contract or slot (conflict score: ${forecast.conflictScore?.toFixed(2) ?? "N/A"}). Waiting for the mempool to settle before retrying the simulation.`;
+      }
       return `Network contention is high (score: ${forecast.contentionScore?.toFixed(2) ?? "N/A"}). Waiting for activity to settle before retrying the simulation.`;
+    }
 
     case "SUGGEST_ADJUSTMENT":
       return policy.suggestedAdjustment ??

@@ -94,6 +94,7 @@ function GuardConsole() {
       if (
         prev.forecast.outputDriftPercent === recheckData.forecast.outputDriftPercent &&
         prev.forecast.riskLevel === recheckData.forecast.riskLevel &&
+        prev.forecast.conflictScore === recheckData.forecast.conflictScore &&
         prev.policy.action === recheckData.policy.action &&
         JSON.stringify(prev.forecast.flags) === JSON.stringify(recheckData.forecast.flags)
       ) {

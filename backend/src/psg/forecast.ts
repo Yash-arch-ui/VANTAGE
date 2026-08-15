@@ -131,6 +131,12 @@ export type PSGForecast = {
   nonceCurrent: boolean | null;
   nonceIssue: "STALE" | "GAP" | null;
   contentionScore: number | null;
+  /** ECA contract-level conflict estimator, 0–1. Null when never scanned. */
+  conflictScore?: number | null;
+  /** Conflict flags raised by the ECA: POTENTIAL_STATE_CONFLICT | HIGH_STATE_CONFLICT. */
+  conflictFlags?: ConflictFlag[];
+  /** Deterministic evidence snapshot behind conflictScore (persisted to the audit ledger). */
+  conflictEvidence?: ConflictEvidence | null;
   riskLevel: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
   flags: string[];
   timestamp: number;
@@ -342,6 +348,9 @@ export async function getForecast(
     nonceCurrent: null,
     nonceIssue: null,
     contentionScore: null,
+    conflictScore: null,
+    conflictFlags: [],
+    conflictEvidence: null,
     riskLevel: "LOW",
     flags: [],
     timestamp,
@@ -766,6 +775,402 @@ async function checkApprovalExposure(tx: VantageTxRequest): Promise<boolean> {
   }
 }
 
+// ── Execution Conflict Analyzer (ECA) — contract-level ─────────────────
+//
+// A deterministic, evidence-based estimator of execution conflict at the
+// CONTRACT level (per the ECA spec: no storage-slot tracing, no OCC
+// reconstruction, and never a claim of true conflict detection).
+//
+// The mempool is enumerated through the pending block — the one primitive the
+// public Monad RPC exposes. The Stage 0 capability probe showed txpool_content
+// and txpool_inspect answer -32601 "Method not found", while
+// eth_getBlockByNumber("pending", true) returns full pending transactions
+// (hash, from, to, input, nonce, gasPrice, value). When that call degrades,
+// the scanner falls back to the log/calldata strategy (log density on the
+// target contract, via the existing getContentionScore).
+//
+// Signals (all counts come from the pending block, pre-filtered for viability
+// and same-sender serialization, and excluding the transaction being evaluated
+// itself — matched on from+nonce so a recheck of an already-submitted tx never
+// counts itself):
+//   sameContract     — viable, other-sender pending txs to the evaluated target
+//   competingSwap    — pending swap() calls on the AMM (evaluated tx is a swap)
+//   poolWriter       — pending non-swap reserve movers decoded from the AMM ABI
+//                      (evaluated tx is a swap) — half-weight direct conflicts
+//   competingClaim   — pending claim(slotId) calls for the SAME slot (eval is a claim)
+//   poolPressure     — viable pending txs chain-wide (mempool load context)
+//
+// Score (recalibrated v3 — audit-driven constant rebalance. Same curve family
+// g(n, k) = n / (n + k), but the weights and curve shapes now read the audit
+// findings):
+//   g(n, k) = n / (n + k)
+//   sameContractScore   = g(competingTxCount, 2)
+//   directConflictScore = g(effDirect, 1)              // effDirect = swaps + 0.5·writers
+//                         g(competingClaimCount, 0.5)  // same-slot claims: winner-take-all
+//   poolPressureScore   = g(pendingPoolSize, 250)
+//   conflictScore = min(1, 0.08·sameContractScore + 0.86·directConflictScore + 0.06·poolPressureScore)
+//
+// Flags (severity ladder — HIGH subsumes POTENTIAL):
+//   POTENTIAL_STATE_CONFLICT at conflictScore >= 0.30 (mirrors the HIGH_CONTENTION floor)
+//   HIGH_STATE_CONFLICT      at conflictScore >= 0.60
+//
+// The 0.30 / 0.60 policy thresholds are unchanged, and every policy anchor
+// survives — one direct competitor → POTENTIAL (WARN), two → HIGH (HOLD), a
+// single same-slot claim → HIGH, ambient-only pressure never flags. What
+// changed (v3 calibration):
+//   - direct-conflict weight 0.80 → 0.86: the score is dominated by the
+//     question "who is racing me", not "what is near me";
+//   - same-contract weight 0.14 → 0.08 AND curve k 1 → 2: ambient context
+//     rises half as fast, so 25 undecodable same-contract txs now contribute
+//     ≈0.074 instead of ≈0.135 — a wide margin below the 0.30 flag floor;
+//   - claim curve k 0.4 → 0.5: same-slot claims stay winner-take-all (one
+//     claim → HIGH) but the 2→25 same-slot-claim range now discriminates
+//     (≈0.15 → ≈0.19 of score spread instead of flattening at ~0.88);
+//   - pool curve k 300 → 250: chain-wide pressure responds sooner — at 150
+//     pending txs its contribution roughly doubles (≈0.013 → ≈0.025).
+//
+// Why not flatten the swap/direct curve further? The policy anchors cap the
+// dynamic range: two competing swaps must score ≥ 0.60 (HIGH) and a single
+// swap must stay under 0.60, which pins the direct curve to k ≈ 1 and the
+// combined non-pool weight to ≈ 0.94 — the 2→25 competitor spread is bounded
+// at ≈ 0.33 by construction. The v3 rebalance widens the measured spread to
+// the achievable maximum (≈0.28 → ≈0.29 for swaps, ≈0.15 → ≈0.19 for claims)
+// without crossing an anchor. Ambient same-contract + pool pressure alone can
+// never reach even POTENTIAL (max 0.08 + 0.06 = 0.14): some direct evidence is
+// required to flag. In the logs-fallback the score caps at contention·0.5 ≤ 0.5,
+// so HIGH_STATE_CONFLICT is never claimed without mempool evidence.
+
+export type ConflictFlag = "POTENTIAL_STATE_CONFLICT" | "HIGH_STATE_CONFLICT";
+
+/** One pending transaction kept in the persisted evidence snapshot. */
+export type PendingTxSummary = {
+  from: string;
+  to: string | null;
+  /** First 4 bytes of calldata — the function selector, when calldata is present. */
+  selector: string | null;
+  nonce: string;
+};
+
+/**
+ * The deterministic evidence behind a conflictScore. Persisted verbatim into
+ * forecast_json so every audit row carries the evidence that produced it.
+ */
+export type ConflictEvidence = {
+  /** pending-block = real mempool enumeration; logs-fallback = log-density proxy. */
+  source: "pending-block" | "logs-fallback";
+  scannedAt: number;
+  competingTxCount: number;
+  competingSwapCount: number;
+  /** Non-swap AMM reserve movers (decoded from the AMM ABI) — half-weight direct conflicts. */
+  competingPoolWriterCount: number;
+  competingClaimCount: number;
+  /** Viable pending txs chain-wide (non-viable txs are filtered out). */
+  pendingPoolSize: number;
+  /** Same-sender pending txs excluded as serialized (never competitors). */
+  excludedSameSenderCount: number;
+  /** Pending txs excluded for explicit gasPrice 0 / gas 0 (cannot mine). */
+  excludedNonViableCount: number;
+  /** Bounded snapshot of counted competitors to the evaluated target (cap ECA_EVIDENCE_TX_CAP). */
+  relevantTxs: PendingTxSummary[];
+  error?: string;
+};
+
+export type ConflictScanResult = {
+  conflictScore: number;
+  flags: ConflictFlag[];
+  evidence: ConflictEvidence;
+};
+
+/** Structural view of a pending-block transaction — only what the ECA reads. */
+export type PendingTxLike = {
+  from: string;
+  to: string | null;
+  input?: string;
+  nonce: string | number | bigint;
+  /** Optional viability fields — explicit 0 (the Monad mempool artifact) marks a tx that cannot mine. */
+  gasPrice?: string | number | bigint | null;
+  gas?: string | number | bigint | null;
+};
+
+// ── ECA constants ───────────────────────────────────────────────────────
+
+// Recalibrated (v3) weights: the direct-conflict signal dominates (0.86), ambient
+// same-contract pressure is minor context (0.08), chain-wide pool pressure is a
+// slow background term with real headroom (0.06).
+const ECA_SAME_CONTRACT_WEIGHT = 0.08;
+const ECA_DIRECT_CONFLICT_WEIGHT = 0.86;
+const ECA_POOL_PRESSURE_WEIGHT = 0.06;
+// Diminishing-returns curve shapes — g(n, k) = n / (n + k). The direct curve
+// stays at k=1 (a single competitor at half weight; k>1 would push two
+// competing swaps under the 0.60 HIGH anchor). The claim curve (k=0.5) keeps
+// same-slot claims winner-take-all while leaving room to discriminate 2 vs 25
+// racers. The same-contract curve (k=2) rises half as fast as before, so
+// ambient context stays far below the flag floor.
+const ECA_SAME_CONTRACT_K = 2;
+const ECA_DIRECT_K = 1;
+const ECA_CLAIM_DIRECT_K = 0.5;
+// Chain-wide pool pressure grows slowly (denominator 250) and never saturates —
+// the old min(pool/50, 1) flattened at 50 pending txs.
+const ECA_POOL_PRESSURE_K = 250;
+// A non-swap reserve mover (addLiquidity / removeLiquidity / …) counts as half
+// a competing swap: it moves the reserves the evaluated swap's quote depends on.
+const ECA_POOL_WRITER_FACTOR = 0.5;
+const ECA_POTENTIAL_THRESHOLD = 0.3; // mirrors the HIGH_CONTENTION flag floor
+const ECA_HIGH_THRESHOLD = 0.6;
+const ECA_EVIDENCE_TX_CAP = 20; // bound the persisted evidence snapshot
+const ECA_FALLBACK_CONTENTION_FACTOR = 0.5; // log density is weaker than mempool evidence
+
+const normAddr = (a: string): string => a.toLowerCase();
+
+/** First 4 bytes of calldata, or null when absent / malformed. */
+function calldataSelector(input: string | undefined): string | null {
+  if (!input || !input.startsWith("0x") || input.length < 10) return null;
+  return input.slice(0, 10);
+}
+
+/** Decode a known-ABI function name from calldata, or null when undecodable. */
+function decodeFunctionName(data: string | undefined, abi: readonly unknown[]): string | null {
+  if (!data || data === "0x") return null;
+  try {
+    return decodeFunctionData({ abi, data: data as Hex }).functionName;
+  } catch {
+    return null;
+  }
+}
+
+/** Decode the slotId argument of a claim(slotId) call, or null when not a claim. */
+function decodeClaimSlot(data: string | undefined): bigint | null {
+  if (!data || data === "0x") return null;
+  try {
+    const decoded = decodeFunctionData({ abi: claimContractAbi, data: data as Hex });
+    if (decoded.functionName !== "claim") return null;
+    return decoded.args[0] as bigint;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * AMM functions that write pool state (everything but the swap path and the
+ * view functions). Used to recognise non-swap reserve movers (pool writers).
+ */
+const AMM_MUTATING_FUNCTIONS: ReadonlySet<string> = new Set(
+  ammAbi
+    .filter(
+      (item): item is Extract<(typeof ammAbi)[number], { type: "function" }> =>
+        item.type === "function",
+    )
+    .filter((fn) => fn.stateMutability === "payable" || fn.stateMutability === "nonpayable")
+    .map((fn) => fn.name),
+);
+
+/**
+ * True when a pending tx could plausibly mine: no explicit 0 gasPrice / gas.
+ * The Stage 0 probe found 0-gasPrice/0-gas txs sitting in Monad's pending
+ * block — they can never be included, so they must not count as competitors
+ * or as pool pressure. Missing fields are treated as viable (undefined ≠ 0).
+ * Never throws: an unparseable value is treated as viable.
+ */
+function isViablePendingTx(p: PendingTxLike): boolean {
+  for (const field of [p.gasPrice, p.gas]) {
+    if (field === undefined || field === null) continue;
+    try {
+      if (BigInt(field) === 0n) return false;
+    } catch {
+      // unparseable — not evidence of non-viability
+    }
+  }
+  return true;
+}
+
+/**
+ * Diminishing-returns curve: g(n, k) = n / (n + k). Monotonic and never fully
+ * saturates — the replacement for the old min(n/denominator, 1) linear caps.
+ */
+function diminishing(n: number, k: number): number {
+  if (n <= 0) return 0;
+  return n / (n + k);
+}
+
+/** The evaluated tx itself, when it is already pending (recheck after sign). */
+function isEvaluatedTx(p: PendingTxLike, tx: VantageTxRequest): boolean {
+  return normAddr(p.from) === normAddr(tx.from) && String(p.nonce) === String(tx.nonce);
+}
+
+/**
+ * The conflict flags for a score — a severity ladder: none < POTENTIAL < HIGH.
+ */
+function conflictFlagsFor(score: number): ConflictFlag[] {
+  if (score >= ECA_HIGH_THRESHOLD) return ["HIGH_STATE_CONFLICT"];
+  if (score >= ECA_POTENTIAL_THRESHOLD) return ["POTENTIAL_STATE_CONFLICT"];
+  return [];
+}
+
+/**
+ * Pure, deterministic core of the ECA — unit-testable without any RPC.
+ * Counts competing pending transactions against the evaluated tx and derives
+ * the 0–1 conflictScore + flags. Never throws.
+ *
+ * Pre-filters (each count is filtered before it becomes evidence):
+ *   - same-sender txs (other nonces) are excluded: a sender's own nonce
+ *     sequence serializes deterministically, so those txs can never race the
+ *     evaluated tx (they are not competitors);
+ *   - non-viable txs (explicit gasPrice 0 or gas 0 — the Monad mempool
+ *     artifact found by the Stage 0 probe) are excluded from every count;
+ *   - non-swap AMM reserve movers (decoded from the AMM ABI) count as
+ *     half-weight direct conflicts — they move the pool reserves the
+ *     evaluated swap's quote depends on.
+ *
+ * v3 recalibration — weights (same 0.08 / direct 0.86 / pool 0.06) and curve
+ * shapes (same k=2, claim k=0.5, pool k=250) only. No signal added or removed,
+ * thresholds untouched.
+ */
+export function analyzePendingTxs(
+  tx: VantageTxRequest,
+  pending: readonly PendingTxLike[],
+  scannedAt: number,
+): ConflictScanResult {
+  const target = normAddr(tx.to);
+  const amm = normAddr(AMM_ADDRESS);
+  const claim = normAddr(CLAIM_CONTRACT_ADDRESS);
+
+  const evaluatedSwap = decodeFunctionName(tx.data, ammAbi) === "swap";
+  const evaluatedClaimSlot = decodeClaimSlot(tx.data);
+
+  let competingTxCount = 0;
+  let competingSwapCount = 0;
+  let competingPoolWriterCount = 0;
+  let competingClaimCount = 0;
+  let excludedSameSenderCount = 0;
+  let excludedNonViableCount = 0;
+  let viablePoolSize = 0;
+  const relevantTxs: PendingTxSummary[] = [];
+
+  for (const p of pending) {
+    if (!isViablePendingTx(p)) {
+      excludedNonViableCount++;
+      continue;
+    }
+    viablePoolSize++;
+    if (isEvaluatedTx(p, tx)) continue; // never count the tx being evaluated
+    if (normAddr(p.from) === normAddr(tx.from)) {
+      excludedSameSenderCount++; // serialized by the sender's nonce — not a competitor
+      continue;
+    }
+    const to = p.to ? normAddr(p.to) : null;
+    if (to !== target) continue; // same contract access only
+    competingTxCount++;
+    if (relevantTxs.length < ECA_EVIDENCE_TX_CAP) {
+      relevantTxs.push({
+        from: p.from,
+        to: p.to,
+        selector: calldataSelector(p.input),
+        nonce: String(p.nonce),
+      });
+    }
+    if (target === amm && evaluatedSwap) {
+      const fn = decodeFunctionName(p.input, ammAbi);
+      if (fn === "swap") {
+        competingSwapCount++;
+      } else if (fn !== null && AMM_MUTATING_FUNCTIONS.has(fn)) {
+        competingPoolWriterCount++;
+      }
+    }
+    if (target === claim && evaluatedClaimSlot !== null) {
+      const slot = decodeClaimSlot(p.input);
+      if (slot !== null && slot === evaluatedClaimSlot) competingClaimCount++;
+    }
+  }
+
+  const pendingPoolSize = viablePoolSize;
+  const effectiveDirect = evaluatedSwap
+    ? competingSwapCount + ECA_POOL_WRITER_FACTOR * competingPoolWriterCount
+    : competingClaimCount;
+  const directK = evaluatedSwap ? ECA_DIRECT_K : ECA_CLAIM_DIRECT_K;
+  const sameContractScore = diminishing(competingTxCount, ECA_SAME_CONTRACT_K);
+  const directConflictScore = diminishing(effectiveDirect, directK);
+  const poolPressureScore = diminishing(pendingPoolSize, ECA_POOL_PRESSURE_K);
+
+  const raw =
+    ECA_SAME_CONTRACT_WEIGHT * sameContractScore +
+    ECA_DIRECT_CONFLICT_WEIGHT * directConflictScore +
+    ECA_POOL_PRESSURE_WEIGHT * poolPressureScore;
+  const conflictScore = Math.min(1, Math.round(raw * 1000) / 1000);
+
+  return {
+    conflictScore,
+    flags: conflictFlagsFor(conflictScore),
+    evidence: {
+      source: "pending-block",
+      scannedAt,
+      competingTxCount,
+      competingSwapCount,
+      competingPoolWriterCount,
+      competingClaimCount,
+      pendingPoolSize,
+      excludedSameSenderCount,
+      excludedNonViableCount,
+      relevantTxs,
+    },
+  };
+}
+
+/**
+ * Log/calldata fallback — used when the mempool is not enumerable (RPC error
+ * or no client). Reuses the existing contention scanner as a pressure proxy,
+ * halved because log density is weaker evidence than a real mempool view.
+ * Never throws.
+ */
+async function fallbackConflict(
+  tx: VantageTxRequest,
+  error: unknown,
+): Promise<ConflictScanResult> {
+  const contention = await getContentionScore(tx.to);
+  const conflictScore = Math.min(
+    1,
+    Math.round(contention * ECA_FALLBACK_CONTENTION_FACTOR * 1000) / 1000,
+  );
+  return {
+    conflictScore,
+    flags: conflictFlagsFor(conflictScore),
+    evidence: {
+      source: "logs-fallback",
+      scannedAt: Date.now(),
+      competingTxCount: 0,
+      competingSwapCount: 0,
+      competingPoolWriterCount: 0,
+      competingClaimCount: 0,
+      pendingPoolSize: 0,
+      excludedSameSenderCount: 0,
+      excludedNonViableCount: 0,
+      relevantTxs: [],
+      error: error instanceof Error ? error.message : String(error),
+    },
+  };
+}
+
+/**
+ * Scan the mempool for competing pending transactions against `tx`.
+ *
+ * Enumerates the pending block with full transactions (the one mempool
+ * primitive the public Monad RPC exposes). When the pending block is
+ * unavailable (RPC error) or no client exists, automatically falls back to
+ * the log/calldata strategy. Never throws.
+ */
+export async function scanConflict(tx: VantageTxRequest): Promise<ConflictScanResult> {
+  const client = getPublicClient();
+  if (!client) {
+    return fallbackConflict(tx, new Error("No RPC client available — mempool not enumerable"));
+  }
+  try {
+    const block = await client.getBlock({ blockTag: "pending", includeTransactions: true });
+    const pending = (block.transactions ?? []) as unknown as readonly PendingTxLike[];
+    return analyzePendingTxs(tx, pending, Date.now());
+  } catch (err) {
+    return fallbackConflict(tx, err);
+  }
+}
+
 // ── Top-level PSG aggregator ───────────────────────────────────────────
 
 /**
@@ -781,7 +1186,8 @@ function deriveRiskLevel(
     flags.includes("STALE_STATE") ||
     flags.includes("LOW_BALANCE") ||
     flags.includes("NONCE_STALE") ||
-    flags.includes("NONCE_GAP")
+    flags.includes("NONCE_GAP") ||
+    flags.includes("HIGH_STATE_CONFLICT")
   ) {
     return "HIGH";
   }
@@ -790,8 +1196,11 @@ function deriveRiskLevel(
     return contentionScore !== null && contentionScore >= holdThreshold ? "HIGH" : "MEDIUM";
   }
   // An unlimited/large approval warrants caution, not a stop — same severity
-  // as the watchdog's approval_exposure warning.
-  if (flags.includes("APPROVAL_EXPOSURE")) return "MEDIUM";
+  // as the watchdog's approval_exposure warning. POTENTIAL_STATE_CONFLICT is
+  // the ECA's WARN-tier flag: real (mempool-derived) but not severe.
+  if (flags.includes("APPROVAL_EXPOSURE") || flags.includes("POTENTIAL_STATE_CONFLICT")) {
+    return "MEDIUM";
+  }
   return "LOW";
 }
 
@@ -804,11 +1213,12 @@ export async function getPSGForecast(
   tx: VantageTxRequest,
   quotedOutput?: bigint
 ): Promise<PSGForecast> {
-  const [forecast, validity, contentionScore, approvalExposure] = await Promise.all([
+  const [forecast, validity, contentionScore, approvalExposure, conflict] = await Promise.all([
     getForecast(tx, quotedOutput),
     checkValidity(tx),
     getContentionScore(tx.to),
     checkApprovalExposure(tx),
+    scanConflict(tx),
   ]);
 
   const flags: string[] = [];
@@ -841,6 +1251,10 @@ export async function getPSGForecast(
     flags.push("APPROVAL_EXPOSURE");
   }
 
+  // ECA — the conflict flags ride the same flags[] surface as every other
+  // signal, so risk derivation and the policy engine see them unchanged.
+  flags.push(...conflict.flags);
+
   // Hold threshold comes from the per-contract calibrated history, falling
   // back to the 0.7 default when the ledger has no calibration yet.
   const holdThreshold = getThreshold(tx.to);
@@ -852,6 +1266,9 @@ export async function getPSGForecast(
     nonceIssue: validity.nonceIssue,
     balanceSufficient: validity.balanceSufficient,
     contentionScore,
+    conflictScore: conflict.conflictScore,
+    conflictFlags: conflict.flags,
+    conflictEvidence: conflict.evidence,
     riskLevel,
     flags,
   };

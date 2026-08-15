@@ -5,7 +5,15 @@
 //   safe (emerald)   — proceed
 //   caution (amber)  — slow down, look closer
 //   danger (crimson) — do not sign
-import type { AlertSeverity, ForecastFlag, PolicyAction, RiskLevel, TxWatchStatus } from "./api";
+import type {
+  AlertSeverity,
+  ConflictEvidence,
+  ConflictFlag,
+  ForecastFlag,
+  PolicyAction,
+  RiskLevel,
+  TxWatchStatus,
+} from "./api";
 
 export type Tone = "safe" | "caution" | "danger" | "neutral";
 
@@ -150,6 +158,36 @@ export function scoreTone(score: number): Tone {
   return "danger";
 }
 
+/**
+ * The ECA's three discrete display states. Derived from the backend's own
+ * conflict flags — a pure label mapping, never a re-derivation of the
+ * classifier from the score. HIGH subsumes POTENTIAL, mirroring the backend
+ * ladder.
+ */
+export type ConflictLevel = "NONE" | "POTENTIAL" | "HIGH";
+
+export function conflictLevel(flags: readonly ConflictFlag[] | undefined): ConflictLevel {
+  if (flags?.includes("HIGH_STATE_CONFLICT")) return "HIGH";
+  if (flags?.includes("POTENTIAL_STATE_CONFLICT")) return "POTENTIAL";
+  return "NONE";
+}
+
+/**
+ * Conflict is a classifier, not a load meter: NONE is safe, POTENTIAL is a
+ * warning, HIGH is a stop — the same safe/caution/danger vocabulary as every
+ * other risk surface in the app.
+ */
+export function conflictLevelTone(level: ConflictLevel): Tone {
+  switch (level) {
+    case "NONE":
+      return "safe";
+    case "POTENTIAL":
+      return "caution";
+    case "HIGH":
+      return "danger";
+  }
+}
+
 export const actionLabel: Record<PolicyAction, string> = {
   PROCEED: "Proceed",
   WARN: "Warning",
@@ -167,6 +205,10 @@ export const flagDescription: Record<ForecastFlag, string> = {
   NONCE_GAP: "There is a gap before this nonce, so it cannot be mined yet.",
   HIGH_CONTENTION: "The target contract is unusually busy; state may shift before inclusion.",
   WATCHDOG_CRITICAL_ALERTS: "The monitor has open critical alerts against this contract.",
+  POTENTIAL_STATE_CONFLICT:
+    "Competing pending transactions may change the target's state before this one executes.",
+  HIGH_STATE_CONFLICT:
+    "Competing pending transactions are racing this one for the same state — expect changes before execution.",
 };
 
 export const watchStatusLabel: Record<TxWatchStatus, string> = {
@@ -176,3 +218,45 @@ export const watchStatusLabel: Record<TxWatchStatus, string> = {
   STUCK: "Stuck",
   DROPPED: "Dropped",
 };
+
+/**
+ * Human-readable explanation for the Execution Conflict card, built purely
+ * from the backend's evidence snapshot. Never a client-side re-derivation:
+ * the level comes from the backend's flags and every number from the
+ * backend's counts.
+ */
+export function explainConflict(
+  flags: readonly ConflictFlag[] | undefined,
+  evidence: ConflictEvidence,
+): string {
+  const level = conflictLevel(flags);
+  const plural = (n: number) => (n === 1 ? "" : "s");
+  const wasWere = (n: number) => (n === 1 ? "was" : "were");
+  // A logs-fallback estimate is weaker evidence than a real mempool view, and
+  // the explanation says so rather than hiding it.
+  const sourceNote =
+    evidence.source === "logs-fallback"
+      ? " The mempool could not be enumerated, so this is an estimate from log density on the target contract."
+      : "";
+
+  if (level !== "NONE") {
+    const { competingSwapCount, competingPoolWriterCount, competingClaimCount, competingTxCount } =
+      evidence;
+    if (competingSwapCount > 0) {
+      return `${competingSwapCount} competing swap${plural(competingSwapCount)} ${wasWere(competingSwapCount)} detected against the same liquidity pool.${sourceNote}`;
+    }
+    if (competingClaimCount > 0) {
+      return `${competingClaimCount} competing claim${plural(competingClaimCount)} ${competingClaimCount === 1 ? "targets" : "target"} the same slot.${sourceNote}`;
+    }
+    if (competingPoolWriterCount > 0) {
+      return `${competingPoolWriterCount} reserve-mutating transaction${plural(competingPoolWriterCount)} ${wasWere(competingPoolWriterCount)} detected against the same pool.${sourceNote}`;
+    }
+    if (competingTxCount > 0) {
+      return `${competingTxCount} competing transaction${plural(competingTxCount)} ${wasWere(competingTxCount)} detected against the same contract.${sourceNote}`;
+    }
+    return level === "HIGH"
+      ? `A high probability of state changes before execution was detected.${sourceNote}`
+      : `Possible state changes before execution were detected.${sourceNote}`;
+  }
+  return "No competing transactions were detected in the mempool.";
+}

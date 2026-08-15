@@ -18,7 +18,61 @@ export type ForecastFlag =
   | "NONCE_STALE"
   | "NONCE_GAP"
   | "HIGH_CONTENTION"
-  | "WATCHDOG_CRITICAL_ALERTS";
+  | "WATCHDOG_CRITICAL_ALERTS"
+  // Raised by the backend's Execution Conflict Analyzer (ECA). They ride the
+  // same flags[] surface as every other signal so risk derivation and the
+  // policy engine see them unchanged.
+  | "POTENTIAL_STATE_CONFLICT"
+  | "HIGH_STATE_CONFLICT";
+
+/**
+ * ECA conflict severity. The backend derives these from conflictScore with a
+ * strict ladder (HIGH subsumes POTENTIAL); the frontend maps them to the
+ * three-state display NONE / POTENTIAL / HIGH and never re-derives the
+ * classifier from the score itself.
+ */
+export type ConflictFlag = "POTENTIAL_STATE_CONFLICT" | "HIGH_STATE_CONFLICT";
+
+/**
+ * Where the ECA's evidence came from. Pending-block is a real mempool
+ * enumeration; logs-fallback is the log-density proxy used when the mempool
+ * is not enumerable. Rendered verbatim as the source indicator — never
+ * inferred on the client.
+ */
+export type ConflictSource = "pending-block" | "logs-fallback";
+
+/** One pending transaction kept in the ECA's persisted evidence snapshot. */
+export type PendingTxSummary = {
+  from: string;
+  to: string | null;
+  /** First 4 bytes of calldata — the function selector, when calldata is present. */
+  selector: string | null;
+  nonce: string;
+};
+
+/**
+ * The deterministic evidence behind conflictScore, transcribed from the
+ * backend's ConflictEvidence. Every count is backend-computed; the card only
+ * renders them.
+ */
+export type ConflictEvidence = {
+  source: ConflictSource;
+  scannedAt: number;
+  /** Viable, other-sender pending txs to the evaluated target. */
+  competingTxCount: number;
+  /** Pending swap() calls on the AMM (when the evaluated tx is a swap). */
+  competingSwapCount: number;
+  /** Non-swap AMM reserve movers — half-weight direct conflicts. */
+  competingPoolWriterCount: number;
+  /** Pending claim(slotId) calls for the same slot (when the eval is a claim). */
+  competingClaimCount: number;
+  /** Viable pending txs chain-wide (mempool load context). */
+  pendingPoolSize: number;
+  excludedSameSenderCount: number;
+  excludedNonViableCount: number;
+  relevantTxs: PendingTxSummary[];
+  error?: string;
+};
 
 export type ScoreBreakdown = {
   /** 0..1 — share of recent evaluations that ended in a failed transaction. */
@@ -65,6 +119,16 @@ export type Forecast = {
   nonceIssue: "STALE" | "GAP" | null;
   /** 0..1. */
   contentionScore: number | null;
+  /**
+   * ECA contract-level conflict estimator, 0–1. Null when never scanned.
+   * Optional for compatibility: responses from a backend predating the ECA,
+   * or test fixtures, may omit it — the card degrades to a quiet empty state.
+   */
+  conflictScore?: number | null;
+  /** Conflict flags raised by the ECA: POTENTIAL_STATE_CONFLICT | HIGH_STATE_CONFLICT. */
+  conflictFlags?: ConflictFlag[];
+  /** Deterministic evidence snapshot behind conflictScore. */
+  conflictEvidence?: ConflictEvidence | null;
   riskLevel: RiskLevel;
   flags: ForecastFlag[];
   timestamp: number;
@@ -111,6 +175,9 @@ export type RecheckResult = {
     flags: ForecastFlag[];
     riskLevel: RiskLevel;
     contentionScore: number | null;
+    // ECA — the recheck re-scans the mempool and rides the fresh conflict
+    // score in the payload; flags and evidence stay the original evaluation's.
+    conflictScore: number | null;
     simulationSuccess: boolean;
     revertReason: string | null;
     simulatedOutput: string | null;

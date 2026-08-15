@@ -1,6 +1,7 @@
 import { motion } from "motion/react";
 import { Sparkles } from "lucide-react";
 import type { EvaluateResponse } from "../../lib/api";
+import { ExecutionConflictCard } from "./execution-conflict";
 import {
   actionLabel,
   actionTone,
@@ -111,6 +112,12 @@ export function VerdictPanel({ result }: { result: EvaluateResponse }) {
           </div>
         </div>
       )}
+
+      {/* Execution Conflict — a pure render of the backend ECA's forecast
+          fields (conflictScore / conflictFlags / conflictEvidence). The card
+          re-renders with the same merged result state, so a /api/recheck
+          update flows in without any polling or API changes here. */}
+      <ExecutionConflictCard forecast={forecast} />
 
       {/* The one AI component in the system — labelled, because "6 of 7 are
           deterministic" is a claim worth making visible rather than asserting. */}
