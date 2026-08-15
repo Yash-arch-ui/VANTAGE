@@ -249,6 +249,123 @@ describe("ExecutionConflictCard — recheck transitions", () => {
     expect(screen.getByText("NONE").className).toContain("text-[color:var(--safe)]");
     expect(screen.queryByText(/Competing swaps/)).not.toBeInTheDocument();
   });
+
+  it("moves NONE → HIGH when a recheck finds competing swaps racing the swap", () => {
+    const { rerender } = render(
+      <ExecutionConflictCard
+        forecast={makeForecast({
+          conflictScore: 0,
+          conflictFlags: [],
+          conflictEvidence: makeEvidence(),
+        })}
+      />,
+    );
+    expect(screen.getByText("NONE").className).toContain("text-[color:var(--safe)]");
+
+    // The recheck's mempool scan lands: two competitors against the pool.
+    rerender(
+      <ExecutionConflictCard
+        forecast={makeForecast({
+          conflictScore: 0.614,
+          conflictFlags: ["HIGH_STATE_CONFLICT"],
+          conflictEvidence: makeEvidence({ competingTxCount: 2, competingSwapCount: 2 }),
+        })}
+      />,
+    );
+
+    expect(screen.getByText("HIGH").className).toContain("text-[color:var(--danger)]");
+    expect(screen.getByText("0.614")).toBeInTheDocument();
+    expect(screen.getByText("Competing swaps · 2")).toBeInTheDocument();
+  });
+
+  it("flips MEMPOOL VIEW → LOG-DENSITY ESTIMATE when the mempool becomes unenumerable", () => {
+    const { rerender } = render(
+      <ExecutionConflictCard
+        forecast={makeForecast({
+          conflictScore: 0,
+          conflictFlags: [],
+          conflictEvidence: makeEvidence({ source: "pending-block" }),
+        })}
+      />,
+    );
+    expect(screen.getByText("MEMPOOL VIEW")).toBeInTheDocument();
+
+    // The RPC stops serving the pending block; the ECA falls back to log
+    // density and the fresh evidence carries the new source.
+    rerender(
+      <ExecutionConflictCard
+        forecast={makeForecast({
+          conflictScore: 0.31,
+          conflictFlags: ["POTENTIAL_STATE_CONFLICT"],
+          conflictEvidence: makeEvidence({
+            source: "logs-fallback",
+            error: "eth_getBlockByNumber failed",
+          }),
+        })}
+      />,
+    );
+
+    expect(screen.getByText("LOG-DENSITY ESTIMATE")).toBeInTheDocument();
+    expect(screen.queryByText("MEMPOOL VIEW")).not.toBeInTheDocument();
+    expect(screen.getByText(/log density/)).toBeInTheDocument();
+  });
+
+  it("updates the score while the conflict flags stay unchanged", () => {
+    const { rerender } = render(
+      <ExecutionConflictCard
+        forecast={makeForecast({
+          conflictScore: 0.3,
+          conflictFlags: ["POTENTIAL_STATE_CONFLICT"],
+          conflictEvidence: makeEvidence({ competingTxCount: 1, competingSwapCount: 1 }),
+        })}
+      />,
+    );
+    expect(screen.getByText("POTENTIAL").className).toContain("text-[color:var(--caution)]");
+    expect(screen.getByText("0.300")).toBeInTheDocument();
+
+    // The recheck re-scores the same racers higher — still below the HIGH bar,
+    // so the flags (and therefore the level) are unchanged.
+    rerender(
+      <ExecutionConflictCard
+        forecast={makeForecast({
+          conflictScore: 0.55,
+          conflictFlags: ["POTENTIAL_STATE_CONFLICT"],
+          conflictEvidence: makeEvidence({ competingTxCount: 1, competingSwapCount: 1 }),
+        })}
+      />,
+    );
+
+    expect(screen.getByText("POTENTIAL").className).toContain("text-[color:var(--caution)]");
+    expect(screen.getByText("0.550")).toBeInTheDocument();
+    expect(screen.queryByText("0.300")).not.toBeInTheDocument();
+  });
+
+  it("refreshes the evidence counts when a recheck re-scans the mempool", () => {
+    const { rerender } = render(
+      <ExecutionConflictCard
+        forecast={makeForecast({
+          conflictScore: 0.458,
+          conflictFlags: ["POTENTIAL_STATE_CONFLICT"],
+          conflictEvidence: makeEvidence({ competingTxCount: 1, competingSwapCount: 1 }),
+        })}
+      />,
+    );
+    expect(screen.getByText("Competing swaps · 1")).toBeInTheDocument();
+
+    // The recheck re-scans and now sees two competitors for the same slot/pool.
+    rerender(
+      <ExecutionConflictCard
+        forecast={makeForecast({
+          conflictScore: 0.55,
+          conflictFlags: ["POTENTIAL_STATE_CONFLICT"],
+          conflictEvidence: makeEvidence({ competingTxCount: 2, competingSwapCount: 2 }),
+        })}
+      />,
+    );
+
+    expect(screen.getByText("Competing swaps · 2")).toBeInTheDocument();
+    expect(screen.queryByText("Competing swaps · 1")).not.toBeInTheDocument();
+  });
 });
 
 describe("explainConflict — evidence-only explanations", () => {

@@ -122,9 +122,14 @@ router.post("/recheck", async (req: Request, res: Response) => {
         riskLevel: forecast.riskLevel,
         contentionScore: forecast.contentionScore,
         // ECA — the fresh conflict verdict rides the recheck payload so a
-        // client polling for drift also sees conflict state change. Additive;
-        // existing fields are untouched.
+        // client polling for drift also sees conflict state change. The recheck
+        // re-scans the mempool, so the flags and evidence ride along with the
+        // score: without them the card would show the new score against the
+        // previous scan's level, source and counts. Additive; existing fields
+        // are untouched.
         conflictScore: forecast.conflictScore ?? null,
+        conflictFlags: forecast.conflictFlags ?? [],
+        conflictEvidence: forecast.conflictEvidence ?? null,
         simulationSuccess: forecast.simulationSuccess,
         revertReason: forecast.revertReason,
         simulatedOutput: forecast.simulatedOutput,

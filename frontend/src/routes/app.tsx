@@ -86,7 +86,10 @@ function GuardConsole() {
   // Merge the backend's fresh verdict over the original response. The recheck
   // is a partial forecast + policy; everything else (explanation, entryId)
   // stays untouched. Guarded so a recheck that found no change doesn't create a
-  // new state object every 10s.
+  // new state object every 10s. The ECA's conflict flags and evidence are
+  // compared by value (JSON), not identity: a recheck that only re-scanned the
+  // mempool — same score, flipped source, different counts — must still merge,
+  // or the card would show the new score against the old scan's evidence.
   useEffect(() => {
     if (!recheckData) return;
     setResult((prev) => {
@@ -95,6 +98,10 @@ function GuardConsole() {
         prev.forecast.outputDriftPercent === recheckData.forecast.outputDriftPercent &&
         prev.forecast.riskLevel === recheckData.forecast.riskLevel &&
         prev.forecast.conflictScore === recheckData.forecast.conflictScore &&
+        JSON.stringify(prev.forecast.conflictFlags) ===
+          JSON.stringify(recheckData.forecast.conflictFlags) &&
+        JSON.stringify(prev.forecast.conflictEvidence) ===
+          JSON.stringify(recheckData.forecast.conflictEvidence) &&
         prev.policy.action === recheckData.policy.action &&
         JSON.stringify(prev.forecast.flags) === JSON.stringify(recheckData.forecast.flags)
       ) {

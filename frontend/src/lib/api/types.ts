@@ -175,9 +175,13 @@ export type RecheckResult = {
     flags: ForecastFlag[];
     riskLevel: RiskLevel;
     contentionScore: number | null;
-    // ECA — the recheck re-scans the mempool and rides the fresh conflict
-    // score in the payload; flags and evidence stay the original evaluation's.
+    // ECA — the recheck re-scans the mempool, so the fresh conflict score,
+    // flags and evidence all ride the payload. The card shows the new score
+    // against the new scan's level, source and counts — never a mix of two
+    // scans.
     conflictScore: number | null;
+    conflictFlags: ConflictFlag[];
+    conflictEvidence: ConflictEvidence | null;
     simulationSuccess: boolean;
     revertReason: string | null;
     simulatedOutput: string | null;
