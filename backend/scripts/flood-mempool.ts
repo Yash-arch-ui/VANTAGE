@@ -23,6 +23,8 @@
 //   npx tsx scripts/flood-mempool.ts              # 3 waves x 40 swaps (~15s flooded window)
 //   npx tsx scripts/flood-mempool.ts --waves=5    # keep the mempool flooded longer
 //   npx tsx scripts/flood-mempool.ts --count=60   # bigger pile per wave
+//   npx tsx scripts/flood-mempool.ts --delay=25   # throttle to ~40 req/s (avoids 429)
+//   npx tsx scripts/flood-mempool.ts --batch=8    # concurrent sends per throttle batch
 //   npx tsx scripts/flood-mempool.ts --claim=1    # same-slot claim race instead
 //
 // Why waves: Monad testnet mines in ~1-2s, so a single burst drains before a
@@ -60,6 +62,8 @@ const flag = (name: string, fallback: string) =>
   args.find((a) => a.startsWith(`--${name}=`))?.split("=")[1] ?? fallback;
 const BURST = parseInt(flag("count", "40"), 10);
 const WAVES = parseInt(flag("waves", "3"), 10);
+const DELAY_MS = parseInt(flag("delay", "0"), 10); // ms between individual sends within a wave (0 = parallel)
+const BATCH = parseInt(flag("batch", "8"), 10); // concurrent sends per batch when DELAY_MS > 0
 const WAVE_GAP_MS = 1_200;
 const claimSlotRaw = flag("claim", "");
 const claimSlot = claimSlotRaw === "" ? null : BigInt(claimSlotRaw);
@@ -153,7 +157,8 @@ async function main() {
       args: [AMM_ADDRESS, maxUint256],
     });
     console.log(`approved AMM for unlimited DEMO (${AMM_ADDRESS})`);
-    console.log(`burst  = ${BURST} parallel swaps (0.1 DEMO each)`);
+    const throttleHint = DELAY_MS > 0 ? ` (throttled: ${BATCH} concurrent, ${DELAY_MS}ms gap)` : ` (parallel)`;
+    console.log(`burst  = ${BURST} swaps (0.1 DEMO each)${throttleHint}`);
   }
 
   console.log("\nGet your cursor on the frontend's Evaluate button…");
@@ -183,11 +188,28 @@ async function main() {
       address: account.address,
       blockTag: "pending",
     });
-    const hashes = await Promise.all(
-      Array.from({ length: BURST }, (_, i) =>
-        wallet.sendTransaction({ to: target, data, nonce: waveNonce + i, gas: 500_000n }),
-      ),
-    );
+    // Throttled send: when DELAY_MS > 0, send in small batches to stay
+    // under the RPC rate limit (~50 req/s on public Monad RPC).
+    const hashes: `0x${string}`[] = [];
+    if (DELAY_MS > 0) {
+      for (let b = 0; b < BURST; b += BATCH) {
+        const slice = Array.from(
+          { length: Math.min(BATCH, BURST - b) },
+          (_, i) =>
+            wallet.sendTransaction({ to: target, data, nonce: waveNonce + b + i, gas: 500_000n }),
+        );
+        hashes.push(...(await Promise.all(slice)));
+        if (b + BATCH < BURST) await sleep(DELAY_MS);
+      }
+    } else {
+      hashes.push(
+        ...(await Promise.all(
+          Array.from({ length: BURST }, (_, i) =>
+            wallet.sendTransaction({ to: target, data, nonce: waveNonce + i, gas: 500_000n }),
+          ),
+        )),
+      );
+    }
     wave++;
     console.log(
       `\n🌊 wave ${wave}/${WAVES}: ${hashes.length} txs pending (nonce ${waveNonce}..${waveNonce + BURST - 1})${wave === 1 ? " — CLICK EVALUATE NOW" : " — mempool re-topped"}`,
