@@ -52,3 +52,37 @@ cd ~/VANTAGE/vantage/backend
 
 ------------------------------------------
 cast send "$AMM" "addLiquidity(uint256)" "$AMOUNT" --rpc-url "$MONAD_TESTNET_RPC_URL" --private-key "$PRIVATE_KEY"
+
+
+
+
+-----------EXECUTION CONFLICT (mempool flood) ---------------
+# Floods the mempool with PARALLEL unawaited swaps so the Execution
+# Conflict card shows HIGH_STATE_CONFLICT. The ECA reads the pending
+# block — confirmed swaps (prove-contention) never count.
+#
+# REQUIRES 2 wallets: the flooder = backend/.env PRIVATE_KEY (script
+# mints + approves for it automatically), the evaluator = the wallet
+# connected in the frontend (a DIFFERENT address — same-sender pending
+# txs are excluded by the ECA).
+
+# One-time evaluator setup — mint (any key can run it)
+// bash
+cast send $TOKEN "mint(address,uint256)" 0x2696666fE3Cb5F8472296aFaC1d7CAb95358e852 1000000000000000000000 --rpc-url $RPC --private-key $PK
+# approve — MUST be signed by the evaluator's OWN key (only the owner can)
+// bash
+cast send $TOKEN "approve(address,uint256)" $AMM 1000000000000000000000 --rpc-url $RPC --private-key <evaluator-private-key>
+# ...or skip both and use the MON → Token swap direction (only needs MON)
+
+# Flood — run from the backend/ dir, THEN click Evaluate in the frontend
+# the moment it prints "🌊 wave 1/3 ... CLICK EVALUATE NOW" (3-2-1 countdown).
+# Waves 2-3 re-top the mempool for ~15s so a slow click still catches it.
+// bash
+cd ~/VANTAGE/vantage/backend
+npx tsx scripts/flood-mempool.ts
+# keep the mempool flooded longer
+npx tsx scripts/flood-mempool.ts --waves=5
+# bigger pile per wave
+npx tsx scripts/flood-mempool.ts --count=60
+# same-slot claim race instead (slot is one-shot — run last)
+npx tsx scripts/flood-mempool.ts --claim=1
