@@ -30,6 +30,24 @@ const evaluateRequestBodySchema = z.object({
   quotedOutput: z.string().regex(/^\d+$/, "quotedOutput must be a non-negative integer string").optional(),
 });
 
+// ── Hold-loop timing ───────────────────────────────────────────────────
+
+/**
+ * Hold-loop cadence for the HOLD_AND_RECHECK path, env-overridable so
+ * route-level tests can drive the resolve/timeout branches in milliseconds
+ * instead of waiting on the production 3s/30s defaults. Unset (or invalid)
+ * values fall through to holdAndRecheck's own defaults — production behavior
+ * is unchanged.
+ */
+function holdTimingOptions(): { intervalMs?: number; timeoutMs?: number } {
+  const options: { intervalMs?: number; timeoutMs?: number } = {};
+  const intervalMs = Number(process.env.VANTAGE_HOLD_INTERVAL_MS);
+  const timeoutMs = Number(process.env.VANTAGE_HOLD_TIMEOUT_MS);
+  if (Number.isInteger(intervalMs) && intervalMs > 0) options.intervalMs = intervalMs;
+  if (Number.isInteger(timeoutMs) && timeoutMs > 0) options.timeoutMs = timeoutMs;
+  return options;
+}
+
 // ── POST /evaluate ─────────────────────────────────────────────────────
 
 router.post("/evaluate", async (req: Request, res: Response) => {
@@ -83,14 +101,17 @@ router.post("/evaluate", async (req: Request, res: Response) => {
     const initialPolicy = decidePolicy(forecast);
 
     // 5. If the decision is HOLD_AND_RECHECK, let the polling loop resolve it.
-    //    The hold re-forecasts internally, so adopt the forecast its decision
-    //    was actually based on — otherwise a hold that clears returns PROCEED
-    //    next to the stale HIGH-contention evidence that caused the hold, and
-    //    that contradiction is what gets written to the immutable audit row.
+    //    The hold loop re-forecasts internally to decide the FINAL policy, but
+    //    the response's forecast must stay the ORIGINAL evaluation snapshot
+    //    that triggered the hold — the HIGH_STATE_CONFLICT / HIGH_CONTENTION
+    //    score, flags, and evidence are what the UI renders and what gets
+    //    written to the immutable audit row. Adopting the hold loop's later
+    //    (possibly drained) forecast instead would silently erase the evidence
+    //    the user's HOLD verdict was based on; the live /api/recheck loop is
+    //    what refreshes that state after this response.
     if (initialPolicy.action === "HOLD_AND_RECHECK") {
-      const held = await holdAndRecheck(tx, quotedOutput);
+      const held = await holdAndRecheck(tx, quotedOutput, holdTimingOptions());
       finalPolicy = held.policy;
-      if (held.forecast) forecast = held.forecast;
     } else {
       finalPolicy = initialPolicy;
     }
