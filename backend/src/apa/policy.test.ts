@@ -20,6 +20,7 @@ function base(overrides: Partial<PSGForecast> = {}): PSGForecast {
     nonceCurrent: null,
     nonceIssue: null,
     contentionScore: null,
+    contractSource: "generic",
     riskLevel: "LOW",
     flags: [],
     timestamp: Date.now(),

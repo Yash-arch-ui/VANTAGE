@@ -22,6 +22,7 @@ function base(overrides: Partial<PSGForecast> = {}): PSGForecast {
     nonceCurrent: null,
     nonceIssue: null,
     contentionScore: null,
+    contractSource: "generic",
     conflictScore: null,
     conflictFlags: [],
     conflictEvidence: null,

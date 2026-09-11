@@ -152,6 +152,7 @@ before(async () => {
       nonceCurrent: null,
       nonceIssue: null,
       contentionScore: null,
+      contractSource: "generic",
       riskLevel: "LOW",
       flags: [],
       timestamp: Date.now(),

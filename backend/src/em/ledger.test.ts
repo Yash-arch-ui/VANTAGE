@@ -26,6 +26,7 @@ function forecast(riskLevel: PSGForecast["riskLevel"]): PSGForecast {
     nonceCurrent: true,
     nonceIssue: null,
     contentionScore: null,
+    contractSource: "generic",
     riskLevel,
     flags: [],
     timestamp: Date.now(),

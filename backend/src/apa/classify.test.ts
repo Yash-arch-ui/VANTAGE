@@ -30,6 +30,7 @@ function forecast(over: Partial<PSGForecast> = {}): PSGForecast {
     nonceCurrent: true,
     nonceIssue: null,
     contentionScore: null,
+    contractSource: "generic",
     riskLevel: "LOW",
     flags: [],
     timestamp: Date.now(),

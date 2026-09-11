@@ -27,6 +27,7 @@ function baseForecast(contention?: number | null): PSGForecast {
     nonceCurrent: true,
     nonceIssue: null,
     contentionScore: contention ?? null,
+    contractSource: "generic",
     riskLevel: "LOW",
     flags: [],
     timestamp: Date.now(),

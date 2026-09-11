@@ -43,6 +43,7 @@ function forecast(): PSGForecast {
     nonceCurrent: true,
     nonceIssue: null,
     contentionScore: null,
+    contractSource: "generic",
     riskLevel: "LOW",
     flags: [],
     timestamp: Date.now(),
