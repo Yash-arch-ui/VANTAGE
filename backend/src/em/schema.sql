@@ -30,6 +30,23 @@ CREATE TABLE IF NOT EXISTS contention_thresholds (
 CREATE INDEX IF NOT EXISTS idx_execution_ledger_tx_to ON execution_ledger(tx_to);
 CREATE INDEX IF NOT EXISTS idx_execution_ledger_created_at ON execution_ledger(created_at);
 
+-- ── User-registered contracts ──────────────────────────────────────────
+
+-- Contracts registered via POST /api/contracts/register with a user-supplied
+-- ABI. The ABI is pure data: JSON parsed and handed to viem's decode
+-- functions, never executed. Keyed lowercased (every ledger write/lookup
+-- normalizes), so a checksummed register and a lowercase forecast lookup
+-- refer to the same row.
+CREATE TABLE IF NOT EXISTS user_contracts (
+  address        TEXT PRIMARY KEY COLLATE NOCASE,
+  abi_json       TEXT NOT NULL,
+  label          TEXT,
+  registered_at  TEXT NOT NULL               -- ISO 8601, set server-side only
+);
+
+-- Queried on every forecast for an address not in KNOWN_CONTRACTS.
+CREATE INDEX IF NOT EXISTS idx_user_contracts_address ON user_contracts(address);
+
 -- ── Watchdog: watchlist + alerts ────────────────────────────────────────
 
 -- Contracts the watchdog polls. watch_type distinguishes user-added ('manual')

@@ -104,8 +104,9 @@ export function initDatabase(dbPath: string): Database.Database {
     // schema.sql is CREATE ... IF NOT EXISTS, so this doubles as a safe,
     // idempotent migration: existing tables are left untouched, and missing
     // ones (e.g. the watchdog tables on a DB created before this module
-    // landed) are created on the next server start. Never wipes data.
-    if (!hasTable("execution_ledger") || !hasTable("watchlist")) {
+    // landed, or user_contracts on a DB created before contract registration)
+    // are created on the next server start. Never wipes data.
+    if (!hasTable("execution_ledger") || !hasTable("watchlist") || !hasTable("user_contracts")) {
       const schema = readFileSync(SCHEMA_PATH, "utf-8");
       database.exec(schema);
     }
@@ -435,6 +436,93 @@ export function upsertThreshold(
     ).run(norm(contractAddress), holdThreshold, sampleCount, new Date().toISOString());
   } catch (err) {
     console.error(`[ledger] upsertThreshold failed for "${contractAddress}":`, err);
+  }
+}
+
+// ── User-registered contracts ────────────────────────────────────────────
+
+export type UserContractRow = {
+  address: string;
+  abi_json: string;
+  label: string | null;
+  registered_at: string;
+};
+
+/**
+ * Result of registering a user contract — distinguishes the three outcomes a
+ * caller must tell apart (a fresh insert, an overwrite of an existing
+ * registration, and a database refusal).
+ */
+export type UpsertUserContractResult = "inserted" | "replaced" | "error";
+
+/** Register (or replace) a user-supplied contract + ABI. Parameterized upsert. */
+export function upsertUserContract(
+  address: string,
+  abiJson: string,
+  label: string | null,
+): UpsertUserContractResult {
+  if (!db) {
+    console.error("[ledger] upsertUserContract called before initDatabase — returning error");
+    return "error";
+  }
+  try {
+    if (!ADDRESS_RE.test(address)) {
+      console.error(`[ledger] upsertUserContract: invalid address format "${address}"`);
+      return "error";
+    }
+    const existing = db
+      .prepare("SELECT address FROM user_contracts WHERE address = ?")
+      .get(norm(address));
+    db.prepare(
+      `INSERT INTO user_contracts (address, abi_json, label, registered_at)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT(address) DO UPDATE SET
+         abi_json      = excluded.abi_json,
+         label         = excluded.label,
+         registered_at = excluded.registered_at`,
+    ).run(norm(address), abiJson, label, new Date().toISOString());
+    return existing === undefined ? "inserted" : "replaced";
+  } catch (err) {
+    console.error(`[ledger] upsertUserContract failed for "${address}":`, err);
+    return "error";
+  }
+}
+
+/**
+ * One registered contract by address, or null when unknown. The ABI is stored
+ * exactly as registered (already validated JSON at the route); the caller
+ * still parses it defensively — a row is data at rest, not a promise.
+ */
+export function getUserContract(address: string): UserContractRow | null {
+  if (!db) {
+    console.error("[ledger] getUserContract called before initDatabase — returning null");
+    return null;
+  }
+  try {
+    if (!ADDRESS_RE.test(address)) return null;
+    const row = db
+      .prepare("SELECT address, abi_json, label, registered_at FROM user_contracts WHERE address = ?")
+      .get(norm(address));
+    return (row as UserContractRow | undefined) ?? null;
+  } catch (err) {
+    console.error(`[ledger] getUserContract failed for "${address}":`, err);
+    return null;
+  }
+}
+
+/** All registered contracts, oldest first. The ABI blob is omitted — list views never need it. */
+export function listUserContracts(): Omit<UserContractRow, "abi_json">[] {
+  if (!db) {
+    console.error("[ledger] listUserContracts called before initDatabase — returning []");
+    return [];
+  }
+  try {
+    return db
+      .prepare("SELECT address, label, registered_at FROM user_contracts ORDER BY registered_at ASC")
+      .all() as Omit<UserContractRow, "abi_json">[];
+  } catch (err) {
+    console.error("[ledger] listUserContracts failed:", err);
+    return [];
   }
 }
 

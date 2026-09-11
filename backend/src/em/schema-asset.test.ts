@@ -21,7 +21,7 @@ describe("schema.sql ships with the build", () => {
 
   it("declares every table the ledger queries", () => {
     const schema = readFileSync(resolve(__dirname, "schema.sql"), "utf-8");
-    for (const table of ["execution_ledger", "contention_thresholds", "watchlist", "alerts"]) {
+    for (const table of ["execution_ledger", "contention_thresholds", "watchlist", "alerts", "user_contracts"]) {
       assert.match(
         schema,
         new RegExp(`CREATE TABLE IF NOT EXISTS\\s+${table}`, "i"),
