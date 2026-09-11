@@ -64,6 +64,7 @@ import scoreRouter from "./routes/score.js";
 import ledgerRouter from "./routes/ledger.js";
 import watchRouter from "./routes/watch.js";
 import recheckRouter from "./routes/recheck.js";
+import contractsRouter from "./routes/contracts.js";
 app.use("/api", evaluateRouter);
 app.use("/api", outcomeRouter);
 app.use("/api", statsRouter);
@@ -72,6 +73,7 @@ app.use("/api", scoreRouter);
 app.use("/api", ledgerRouter);
 app.use("/api", watchRouter);
 app.use("/api", recheckRouter);
+app.use("/api", contractsRouter);
 
 // Unknown /api path. Express's default is an HTML "Cannot GET /api/foo", which
 // a JSON client parses as garbage rather than surfacing a useful message.
