@@ -6,6 +6,7 @@ import {
   parseAbi,
   toFunctionSelector,
   decodeFunctionData,
+  decodeErrorResult,
 } from "viem";
 import { monadTestnet } from "viem/chains";
 import { simulateContract } from "viem/actions";
@@ -14,6 +15,7 @@ import { fileURLToPath } from "url";
 import { dirname, resolve } from "path";
 import { config } from "../config.js";
 import { getThreshold, DEFAULT_HOLD_THRESHOLD } from "../em/calibrator.js";
+import { getUserContract } from "../em/ledger.js";
 
 const { rpcUrl } = config;
 
@@ -112,6 +114,83 @@ export const KNOWN_CONTRACTS = new Map<Address, { abi: readonly unknown[]; name:
   [CLAIM_CONTRACT_ADDRESS, { abi: claimContractAbi, name: "ClaimContract" }],
 ]);
 
+// ── User-registered contract ABIs ────────────────────────────────────────
+//
+// Contracts registered via POST /api/contracts/register, resolved AFTER
+// KNOWN_CONTRACTS (the demo contracts we deployed ourselves always keep
+// precedence — their behavior must never change because a user registered a
+// different ABI for the same address) and BEFORE the generic raw-call path.
+//
+// The ABI is untrusted user input, but it is pure DATA: JSON parsed with
+// viem's parseAbi and handed to the same decode functions the known-contract
+// path uses. It is never eval'd or executed as code of any kind. A hostile
+// or garbage ABI can at worst produce a failed/garbage simulation READ —
+// everything downstream is eth_call (read-only, no signing, no sending).
+//
+// Malformed rows are impossible to write through the route (JSON + plausibility
+// validated before storage), but the read here still never trusts the stored
+// value: an unparseable row is treated as "not registered", degrading to the
+// generic path instead of crashing the evaluation.
+
+/**
+ * A resolved user registration: the parsed ABI plus the cache key it came
+ * from (address + the stored JSON string — a re-registration with a different
+ * ABI invalidates the cached parse without a restart).
+ */
+type ResolvedUserContract = { abi: readonly unknown[]; abiJson: string; label: string | null };
+
+const userContractCache = new Map<Address, ResolvedUserContract | null>();
+
+/**
+ * Resolve the user-registered ABI for `address`, or null when not registered.
+ *
+ * The ledger import is dynamic to keep this module's dependency direction
+ * clean (em/ledger imports PSGForecast as a TYPE only — no runtime cycle).
+ * Every failure mode (ledger unavailable, row missing, unparseable JSON,
+ * viem-rejecting ABI) returns null — the caller falls back to the generic
+ * path; nothing here can throw into an evaluation.
+ */
+function resolveUserContract(address: Address): ResolvedUserContract | null {
+  try {
+    // Ledger lookups normalize to lowercase; cache on the same key.
+    const key = address.toLowerCase() as Address;
+    const row = getUserContract(key);
+    if (row === null) return null;
+    const cached = userContractCache.get(key);
+    if (cached !== undefined && cached !== null && cached.abiJson === row.abi_json) {
+      return cached;
+    }
+    const parsed = JSON.parse(row.abi_json);
+    // A JSON ABI array IS viem's runtime ABI format (parseAbi is for
+    // human-readable signature strings, not this). What it still needs is a
+    // shape check, so a row that bypassed the route's validation — or an ABI
+    // viem's decoders would choke on — is treated as not registered rather
+    // than handed downstream: every entry must be an object with a string
+    // "type", exactly viem's JSON-ABI entry shape.
+    if (!Array.isArray(parsed)) return null;
+    for (const entry of parsed) {
+      if (
+        typeof entry !== "object" ||
+        entry === null ||
+        typeof (entry as { type?: unknown }).type !== "string"
+      ) {
+        return null;
+      }
+    }
+    const resolved: ResolvedUserContract = {
+      abi: parsed as readonly unknown[],
+      abiJson: row.abi_json,
+      label: row.label,
+    };
+    userContractCache.set(key, resolved);
+    return resolved;
+  } catch {
+    // Malformed stored JSON or a ledger error — degrade to the generic path.
+    // Cache nothing: a later re-registration may fix it.
+    return null;
+  }
+}
+
 export type VantageTxRequest = {
   from: Address;
   to: Address;
@@ -119,6 +198,15 @@ export type VantageTxRequest = {
   value: bigint;
   nonce: number;
 };
+
+/**
+ * Where the ABI that decoded this forecast came from — lets the API/frontend
+ * present the result with the right confidence level:
+ *   known             — one of the demo contracts we deployed ourselves
+ *   user-registered   — ABI supplied by a user via /api/contracts/register
+ *   generic           — raw eth_call, first return word only, no decoding
+ */
+export type ContractSource = "known" | "user-registered" | "generic";
 
 export type PSGForecast = {
   simulationSuccess: boolean;
@@ -137,6 +225,8 @@ export type PSGForecast = {
   conflictFlags?: ConflictFlag[];
   /** Deterministic evidence snapshot behind conflictScore (persisted to the audit ledger). */
   conflictEvidence?: ConflictEvidence | null;
+  /** Which ABI resolved for tx.to (see ContractSource). Always set by getForecast. */
+  contractSource: ContractSource;
   riskLevel: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
   flags: string[];
   timestamp: number;
@@ -212,7 +302,47 @@ function findViemRevertData(error: unknown): string | undefined {
   return undefined;
 }
 
-export function decodeRevertReason(error: unknown): string {
+/**
+ * Stringify one decoded error arg for the user-ABI path. bigint (the common
+ * case for uint params) renders bare, matching the known-contract style
+ * (`SlotAlreadyClaimed(slotId=5)`); other primitives get a readable form.
+ * Never throws — an exotic type falls back to JSON.stringify.
+ */
+function formatDecodedArg(arg: unknown): string {
+  try {
+    if (typeof arg === "bigint") return arg.toString();
+    if (typeof arg === "string") return `"${arg}"`;
+    if (typeof arg === "boolean" || typeof arg === "number") return String(arg);
+    return JSON.stringify(arg) ?? String(arg);
+  } catch {
+    return String(arg);
+  }
+}
+
+/**
+ * Decode a revert against a caller-supplied ABI's error definitions. Used for
+ * user-registered contracts, whose custom errors the hardcoded selector set
+ * below cannot know. Returns null when the ABI does not define an error
+ * matching the revert data — never throws, never guesses.
+ */
+function decodeWithUserAbi(
+  abi: readonly unknown[],
+  errData: string,
+): string | null {
+  try {
+    const decoded = decodeErrorResult({
+      abi: abi as Parameters<typeof decodeErrorResult>[0]["abi"],
+      data: errData as Hex,
+    });
+    const args = (decoded.args ?? []) as readonly unknown[];
+    const rendered = args.map(formatDecodedArg).join(", ");
+    return args.length > 0 ? `${decoded.errorName}(${rendered})` : `${decoded.errorName}()`;
+  } catch {
+    return null;
+  }
+}
+
+export function decodeRevertReason(error: unknown, abi?: readonly unknown[]): string {
   try {
     const err = error as { shortMessage?: string; message?: string };
 
@@ -222,6 +352,15 @@ export function decodeRevertReason(error: unknown): string {
 
     if (typeof errData !== "string" || errData.length < 10) {
       return err.shortMessage ?? err.message ?? "Unknown revert";
+    }
+
+    // Caller-supplied ABI first: for a user-registered contract, its own error
+    // definitions are the authoritative decode. This also covers Error(string)
+    // and Panic in ABI form. Falls through untouched when the ABI defines no
+    // matching error — the hardcoded selectors below then get their chance.
+    if (abi !== undefined) {
+      const userDecoded = decodeWithUserAbi(abi, errData);
+      if (userDecoded !== null) return userDecoded;
     }
 
     const selectorHex = errData.slice(0, 10).toLowerCase();
@@ -351,6 +490,7 @@ export async function getForecast(
     conflictScore: null,
     conflictFlags: [],
     conflictEvidence: null,
+    contractSource: "generic",
     riskLevel: "LOW",
     flags: [],
     timestamp,
@@ -387,7 +527,7 @@ export async function getForecast(
       try {
         decoded = decodeFunctionData({ abi: known.abi, data: tx.data });
       } catch {
-        return fallback("Unable to decode function call data");
+        return { ...fallback("Unable to decode function call data"), contractSource: "known" };
       }
 
       try {
@@ -443,13 +583,78 @@ export async function getForecast(
         return {
           ...base(),
           simulationSuccess: true,
+          contractSource: "known",
           simulatedOutput,
           quotedOutput: quotedOutput !== undefined ? quotedOutput.toString() : null,
           outputDriftPercent,
           gasEstimate: gasEstimate?.toString() ?? null,
         };
       } catch (simErr) {
-        return fallback(decodeRevertReason(simErr));
+        return {
+          ...fallback(decodeRevertReason(simErr, known.abi)),
+          contractSource: "known",
+        };
+      }
+    }
+
+    // User-registered contract — same rich-decode path as KNOWN_CONTRACTS,
+    // resolved only after the demo contracts (they keep precedence) and
+    // before the generic fallback. resolveUserContract never throws: an
+    // unregistered or malformed row simply returns null and the evaluation
+    // proceeds down the generic path unchanged.
+    const userContract = resolveUserContract(tx.to);
+    if (userContract !== null) {
+      let decoded: { functionName: string; args: readonly unknown[] };
+      try {
+        decoded = decodeFunctionData({ abi: userContract.abi, data: tx.data });
+      } catch {
+        return { ...fallback("Unable to decode function call data"), contractSource: "user-registered" };
+      }
+
+      try {
+        const simResult = await simulateContract(
+          client,
+          {
+            address: tx.to,
+            abi: userContract.abi,
+            functionName: decoded.functionName,
+            args: decoded.args as unknown[] | undefined,
+            account: tx.from,
+            value: tx.value > 0n ? tx.value : undefined,
+          } as unknown as Parameters<typeof simulateContract>[1]
+        );
+        const resultValue = simResult.result as bigint | undefined;
+
+        let simulatedOutput: string | null = null;
+        let outputDriftPercent: number | null = null;
+
+        if (resultValue !== undefined) {
+          simulatedOutput = resultValue.toString();
+          if (quotedOutput !== undefined && quotedOutput !== 0n) {
+            outputDriftPercent = computeDriftPercent(resultValue, quotedOutput);
+          }
+        }
+
+        return {
+          ...base(),
+          simulationSuccess: true,
+          contractSource: "user-registered",
+          simulatedOutput,
+          quotedOutput: quotedOutput !== undefined ? quotedOutput.toString() : null,
+          outputDriftPercent,
+          gasEstimate: gasEstimate?.toString() ?? null,
+        };
+      } catch (simErr) {
+        // decodeRevertReason tries the user ABI's error definitions first —
+        // a custom error like MyError(uint256) decodes with its real name and
+        // args instead of "Unknown error selector". The revert forecast keeps
+        // contractSource "user-registered": the ABI that produced this decode
+        // is the user's, and the base() default ("generic") must not paper
+        // over that on the failure path.
+        return {
+          ...fallback(decodeRevertReason(simErr, userContract.abi)),
+          contractSource: "user-registered",
+        };
       }
     }
 
@@ -490,6 +695,7 @@ export async function getForecast(
     return {
       ...base(),
       simulationSuccess: true,
+      contractSource: "generic",
       simulatedOutput,
       quotedOutput: quotedOutput !== undefined ? quotedOutput.toString() : null,
       outputDriftPercent,

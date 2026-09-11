@@ -133,6 +133,10 @@ router.post("/recheck", async (req: Request, res: Response) => {
         simulationSuccess: forecast.simulationSuccess,
         revertReason: forecast.revertReason,
         simulatedOutput: forecast.simulatedOutput,
+        // Which ABI resolved the entry's target on this recheck — see
+        // ContractSource. A user-registered contract registered between the
+        // original evaluate and this poll visibly upgrades from generic.
+        contractSource: forecast.contractSource,
       },
       policy: { action: policy.action, reason: policy.reason },
     });

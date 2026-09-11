@@ -41,6 +41,14 @@ export type ConflictFlag = "POTENTIAL_STATE_CONFLICT" | "HIGH_STATE_CONFLICT";
  */
 export type ConflictSource = "pending-block" | "logs-fallback";
 
+/**
+ * Where the ABI that decoded a forecast came from:
+ *   known             — a Vantage-deployed demo contract
+ *   user-registered   — ABI supplied via /api/contracts/register
+ *   generic           — raw eth_call, first return word only, no decoding
+ */
+export type ContractSource = "known" | "user-registered" | "generic";
+
 /** One pending transaction kept in the ECA's persisted evidence snapshot. */
 export type PendingTxSummary = {
   from: string;
@@ -129,6 +137,11 @@ export type Forecast = {
   conflictFlags?: ConflictFlag[];
   /** Deterministic evidence snapshot behind conflictScore. */
   conflictEvidence?: ConflictEvidence | null;
+  /**
+   * Which ABI resolved this forecast (see ContractSource). Optional for
+   * compatibility with backends predating user-registered contracts.
+   */
+  contractSource?: ContractSource;
   riskLevel: RiskLevel;
   flags: ForecastFlag[];
   timestamp: number;
@@ -185,6 +198,8 @@ export type RecheckResult = {
     simulationSuccess: boolean;
     revertReason: string | null;
     simulatedOutput: string | null;
+    /** Which ABI resolved on this recheck — optional, pre-registration backends omit it. */
+    contractSource?: ContractSource;
   };
   policy: { action: PolicyAction; reason: string };
 };
